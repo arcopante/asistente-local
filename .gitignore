@@ -1,0 +1,29 @@
+# Entorno virtual
+.venv/
+
+# Base de datos con historial personal
+history.db
+
+# Memoria y configuración personal
+MEMORY.md
+
+# Tareas cron personales
+cron_jobs.json
+
+# Modelos y caché de Whisper
+~/.cache/huggingface/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
