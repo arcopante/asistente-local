@@ -20,6 +20,14 @@ from typing import Iterator, Optional, List, Tuple
 
 # ── Configuracion ─────────────────────────────────────────────────────────────
 
+def _strip_thinking(text: str) -> str:
+    """Elimina bloques de razonamiento interno (<think>...</think>) de la respuesta."""
+    import re
+    # Elimina bloques <think>...</think> incluyendo variantes con saltos de linea
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    return text.strip()
+
+
 def _backend() -> str:
     return os.environ.get("BACKEND", "lmstudio").lower()
 
@@ -109,7 +117,8 @@ def chat_stream(
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> Iterator[str]:
-    """Genera respuesta en streaming. Compatible con LM Studio y Ollama."""
+    """Genera respuesta en streaming. Compatible con LM Studio y Ollama.
+    Filtra bloques <think>...</think> de modelos con razonamiento visible."""
     payload = {
         "model": model,
         "messages": messages,
@@ -117,6 +126,9 @@ def chat_stream(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    in_think = False   # True mientras estamos dentro de un bloque <think>
+    buf = ""           # buffer para detectar etiquetas partidas entre chunks
+
     with httpx.Client(base_url=_base_url(), timeout=120.0) as c:
         with c.stream("POST", "/chat/completions", json=payload) as r:
             r.raise_for_status()
@@ -128,8 +140,39 @@ def chat_stream(
                     try:
                         data = json.loads(chunk)
                         delta = data["choices"][0]["delta"].get("content", "")
-                        if delta:
-                            yield delta
+                        if not delta:
+                            continue
+
+                        buf += delta
+                        out = ""
+
+                        while buf:
+                            if in_think:
+                                end = buf.find("</think>")
+                                if end != -1:
+                                    buf = buf[end + 8:]  # saltar </think>
+                                    in_think = False
+                                else:
+                                    buf = ""  # consumir todo, seguimos en think
+                            else:
+                                start = buf.find("<think>")
+                                if start != -1:
+                                    out += buf[:start]
+                                    buf = buf[start + 7:]
+                                    in_think = True
+                                else:
+                                    # Guardar posible inicio de etiqueta incompleta
+                                    if buf.endswith("<"):
+                                        out += buf[:-1]
+                                        buf = "<"
+                                        break
+                                    else:
+                                        out += buf
+                                        buf = ""
+
+                        if out:
+                            yield out
+
                     except Exception:
                         continue
 
@@ -152,7 +195,7 @@ def chat(
         r = c.post("/chat/completions", json=payload)
         r.raise_for_status()
         data = r.json()
-        content = data["choices"][0]["message"]["content"]
+        content = _strip_thinking(data["choices"][0]["message"]["content"])
         tokens = data.get("usage", {}).get("total_tokens", 0)
         return content, tokens
 
