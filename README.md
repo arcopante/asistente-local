@@ -1,7 +1,7 @@
-# 🤖 Asistente Local
+# 🤖 Asistente Local v5
 
 **Asistente conversacional que corre completamente en tu máquina.**  
-Conectado a [LM Studio](https://lmstudio.ai), controlable por terminal y por Telegram, con memoria persistente, tareas programadas y herramientas del sistema.
+Conectado a [LM Studio](https://lmstudio.ai) u [Ollama](https://ollama.com), controlable por terminal y por Telegram, con memoria persistente, tareas programadas y herramientas del sistema.
 
 Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
 
@@ -28,7 +28,7 @@ Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
 ### Requisitos
 
 - Python 3.9+
-- [LM Studio](https://lmstudio.ai) con el servidor local activo
+- [LM Studio](https://lmstudio.ai) **o** [Ollama](https://ollama.com) con el servidor local activo
 - Token de bot de Telegram (opcional, solo si usas el modo Telegram)
 
 ### 1 — Clonar y configurar
@@ -61,12 +61,20 @@ chmod +x setup.sh
 
 Esto crea un entorno virtual `.venv` e instala todo automáticamente.
 
-### 3 — Activar LM Studio
+### 3 — Activar el backend LLM
 
+**Opción A — LM Studio:**
 1. Abre LM Studio
 2. Ve a la pestaña **Local Server** (icono `<->`)
 3. Pulsa **Start Server**
 4. Carga el modelo que quieras usar
+
+**Opción B — Ollama:**
+```bash
+ollama serve              # inicia el servidor (si no está ya activo)
+ollama pull llama3.2      # descarga el modelo que quieras usar
+```
+Luego en `start.sh` cambia `BACKEND="ollama"`.
 
 ### 4 — Arrancar
 
@@ -221,10 +229,12 @@ Los comandos se filtran en dos niveles antes de ejecutarse:
 
 | Variable | Por defecto | Descripción |
 |---|---|---|
+| `BACKEND` | `lmstudio` | Backend LLM: `lmstudio` o `ollama` |
 | `TELEGRAM_TOKEN` | — | Token del bot (de @BotFather) |
 | `TELEGRAM_ALLOWED_USERS` | vacío (todos) | IDs de usuario separados por coma |
 | `TELEGRAM_MAX_FILE_MB` | `20` | Tamaño máximo de fichero |
 | `LMSTUDIO_HOST` | `http://localhost:1234` | URL del servidor LM Studio |
+| `OLLAMA_HOST` | `http://localhost:11434` | URL del servidor Ollama |
 | `LMSTUDIO_DEFAULT_MODEL` | vacío (autodetectar) | Modelo al arrancar |
 | `LMSTUDIO_MAX_TOKENS` | `2048` | Tokens máximos por respuesta |
 | `LMSTUDIO_TEMPERATURE` | `0.7` | Temperatura del modelo |

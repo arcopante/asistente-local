@@ -21,7 +21,7 @@ from rich import print as rprint
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core import database, lmstudio
+from core import database, llm_client
 from core.commands import handle_command
 from core.cron_manager import CronManager
 
@@ -64,7 +64,7 @@ def build_system_prompt(state: Optional[dict] = None) -> str:
 
 def detect_model() -> Optional[str]:
     try:
-        return lmstudio.get_loaded_model()
+        return llm_client.get_loaded_model()
     except Exception:
         return None
 
@@ -77,7 +77,7 @@ def cron_notify(message: str):
 
 def run_terminal(state: dict, cron: CronManager):
     console.print(Panel.fit(
-        "[bold cyan]🤖 Agente LM Studio — Terminal[/bold cyan]\n"
+        "[bold cyan]🤖 Asistente Local — Terminal[/bold cyan]\n"
         "[dim]Escribe /help para ver los comandos disponibles[/dim]",
         border_style="cyan"
     ))
@@ -125,7 +125,7 @@ def run_terminal(state: dict, cron: CronManager):
         console.print("\n[bold blue]Agente[/bold blue] ", end="")
         response_text = ""
         try:
-            for chunk in lmstudio.chat_stream(
+            for chunk in llm_client.chat_stream(
                 model=state["model"],
                 messages=messages,
                 temperature=float(os.environ.get("LMSTUDIO_TEMPERATURE", "0.7")),
@@ -153,10 +153,9 @@ async def run_telegram(cron: CronManager):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    lm_host = os.environ.get("LMSTUDIO_HOST", "")
-    if lm_host:
-        import core.lmstudio as _lm
-        _lm.LMSTUDIO_BASE = lm_host.rstrip("/") + "/v1"
+    # El backend se configura via variables de entorno en start.sh
+    # BACKEND=lmstudio | ollama, LMSTUDIO_HOST, OLLAMA_HOST
+    # llm_client.py lee estas variables dinamicamente en cada llamada
 
     database.init_db()
     SOULS_DIR.mkdir(exist_ok=True)
@@ -179,8 +178,8 @@ def main():
     state["session_id"] = database.new_session(model=state["model"])
 
     cron = CronManager(notify_callback=cron_notify)
-    from core.lmstudio import chat as _lm_chat, get_loaded_model as _get_model
-    cron.set_lmstudio(_lm_chat, lambda: state.get("model") or _get_model())
+    from core.llm_client import chat as _lm_chat, get_loaded_model as _get_model
+    cron.set_llm(_lm_chat, lambda: state.get("model") or _get_model())
     cron.set_context_callback(
         lambda sid, role, content: database.save_message(sid, role, content)
     )

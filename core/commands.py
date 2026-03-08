@@ -14,7 +14,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich import print as rprint
 
-from core import lmstudio, database
+from core import llm_client, database
 from core.cron_manager import CronManager
 
 console = Console()
@@ -86,18 +86,18 @@ def handle_command(cmd_line: str, state: dict, cron: CronManager) -> bool:
 
 def _cmd_list():
     try:
-        models = lmstudio.list_models()
+        models = llm_client.list_models()
         if not models:
-            rprint("[yellow]No hay modelos disponibles en LM Studio.[/yellow]")
+            rprint("[yellow]No hay modelos disponibles en el backend activo.[/yellow]")
             return
-        table = Table(title="Modelos en LM Studio", show_lines=True)
+        table = Table(title="Modelos disponibles", show_lines=True)
         table.add_column("ID", style="cyan")
         table.add_column("Tipo", style="green")
         for m in models:
             table.add_row(m.get("id", "-"), m.get("object", "-"))
         console.print(table)
     except Exception as e:
-        rprint(f"[red]Error conectando con LM Studio:[/red] {e}")
+        rprint(f"[red]Error conectando con el backend:[/red] {e}")
 
 
 def _cmd_load(model_id: str, state: dict):
@@ -105,13 +105,13 @@ def _cmd_load(model_id: str, state: dict):
         rprint("[yellow]Uso: /load <model_id>[/yellow]")
         return
     rprint(f"[cyan]Cargando modelo [bold]{model_id}[/bold]...[/cyan]")
-    ok = lmstudio.load_model(model_id)
+    ok = llm_client.load_model(model_id)
     if ok:
         state["model"] = model_id
         database.update_session_model(state["session_id"], model_id)
         rprint(f"[green]Modelo cargado:[/green] {model_id}")
     else:
-        rprint("[red]No se pudo cargar el modelo.[/red] Verifica el ID en LM Studio.")
+        rprint("[red]No se pudo cargar el modelo.[/red] Verifica que el backend esta activo y el modelo existe.")
 
 
 def _cmd_unload(arg: str, state: dict):
@@ -125,7 +125,7 @@ def _cmd_unload(arg: str, state: dict):
     else:
         rprint("[cyan]Descargando modelo activo...[/cyan]")
 
-    ok, msg = lmstudio.unload_model(model_id)
+    ok, msg = llm_client.unload_model(model_id)
     if ok:
         rprint(f"[green]Modelo descargado:[/green] {msg}")
         if state.get("model") == msg or not arg:
@@ -133,7 +133,7 @@ def _cmd_unload(arg: str, state: dict):
             rprint("[dim]Usa /list y /load <model> para cargar otro modelo.[/dim]")
     else:
         rprint(f"[yellow]No se pudo descargar via API:[/yellow] {msg}")
-        rprint("  Como alternativa puedes descargarlo desde la interfaz de LM Studio.")
+        rprint("  En Ollama prueba: ollama pull <modelo>. En LM Studio descargalo desde la interfaz.")
 
 
 def _cmd_status(state: dict):
@@ -152,10 +152,12 @@ def _cmd_status(state: dict):
     table.add_row("Ahora", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     console.print(table)
     try:
-        models = lmstudio.list_models()
-        rprint(f"[green]LM Studio:[/green] conectado ({len(models)} modelo(s))")
+        models = llm_client.list_models()
+        from core.llm_client import backend_info
+        rprint(f"[green]Backend:[/green] {backend_info()} — {len(models)} modelo(s)")
     except Exception:
-        rprint("[red]LM Studio:[/red] sin conexion (esta ejecutandose?)")
+        from core.llm_client import backend_info
+        rprint("[red]Backend:[/red] " + backend_info() + " — sin conexion")
 
 
 def _cmd_reset(state: dict):
@@ -203,7 +205,7 @@ def _cmd_compact(state: dict):
     )
 
     try:
-        summary, _ = lmstudio.chat(
+        summary, _ = llm_client.chat(
             model=state["model"],
             messages=[{"role": "user", "content": summary_prompt}],
             temperature=0.3,
@@ -555,7 +557,7 @@ def _cmd_help():
     table.add_column("Descripcion", style="white")
     cmds = [
         ("── Modelo ──", ""),
-        ("/list", "Lista los modelos en LM Studio"),
+        ("/list", "Lista los modelos en el backend activo"),
         ("/load <model>", "Carga un modelo"),
         ("/unload [model]", "Descarga el modelo activo (o el indicado)"),
         ("/status", "Estado y estadisticas"),

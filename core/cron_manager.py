@@ -36,7 +36,7 @@ class CronManager:
         self._terminal_notify = notify_callback or self._default_notify
         self._telegram_send = None
         self._loop = None
-        self._lmstudio_chat = None   # funcion chat(model, messages) -> (text, tokens)
+        self._llm_chat = None   # funcion chat(model, messages) -> (text, tokens)
         self._active_model = None    # modelo activo del agente
         self._save_to_context = None # callback(session_id, role, content) para guardar en BD
         self._running = False
@@ -51,13 +51,13 @@ class CronManager:
     def set_event_loop(self, loop):
         self._loop = loop
 
-    def set_lmstudio(self, chat_fn, model_getter):
+    def set_llm(self, chat_fn, model_getter):
         """
         Registra la funcion de chat del LLM y un getter del modelo activo.
         chat_fn: callable(model, messages) -> (text, tokens)
         model_getter: callable() -> str o None
         """
-        self._lmstudio_chat = chat_fn
+        self._llm_chat = chat_fn
         self._model_getter = model_getter
 
     def set_context_callback(self, callback):
@@ -204,7 +204,7 @@ class CronManager:
 
     def _execute_llm(self, job: dict, timestamp: str):
         # Verificar que el LLM esta registrado
-        if not self._lmstudio_chat:
+        if not self._llm_chat:
             msg = "[cron] ERROR: LLM no registrado. El cron llm: requiere que el agente este activo con un modelo cargado."
             self._terminal_notify(msg)
             self._send_telegram(job, "❌ " + msg)
@@ -231,7 +231,7 @@ class CronManager:
                 "Fecha y hora actual: " + datetime.now().strftime("%Y-%m-%d %H:%M") + "\n\n"
                 + prompt
             )
-            text, _ = self._lmstudio_chat(
+            text, _ = self._llm_chat(
                 model=model,
                 messages=[{"role": "user", "content": full_prompt}],
                 temperature=0.8,

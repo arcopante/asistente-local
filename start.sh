@@ -10,8 +10,15 @@ export TELEGRAM_ALLOWED_USERS=""               # IDs separados por coma (vacío 
                                                # Ejemplo: "123456789,987654321"
 export TELEGRAM_MAX_FILE_MB="20"               # Tamaño máximo de fichero en MB
 
+# ── Backend LLM ──────────────────────────────────────────────
+export BACKEND="lmstudio"                      # lmstudio | ollama
+
 # ── LM Studio ────────────────────────────────────────────────
 export LMSTUDIO_HOST="http://localhost:1234"   # URL del servidor LM Studio
+
+# ── Ollama ───────────────────────────────────────────────────
+export OLLAMA_HOST="http://localhost:11434"    # URL del servidor Ollama
+
 export LMSTUDIO_DEFAULT_MODEL=""               # Modelo por defecto (vacío = autodetectar)
 export LMSTUDIO_MAX_TOKENS="2048"              # Tokens máximos por respuesta
 export LMSTUDIO_TEMPERATURE="0.7"              # Temperatura (0.0 = determinista, 1.0 = creativo)

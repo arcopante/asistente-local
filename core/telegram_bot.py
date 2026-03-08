@@ -22,7 +22,7 @@ from telegram.ext import (
     filters,
 )
 
-from core import database, lmstudio
+from core import database, llm_client
 from core.cron_manager import CronManager
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ _user_state: dict[int, dict] = {}
 
 def get_user_state(user_id: int) -> dict:
     if user_id not in _user_state:
-        model = lmstudio.get_loaded_model()
+        model = llm_client.get_loaded_model()
         session_id = database.new_session(model=model, label=f"telegram:{user_id}")
         _user_state[user_id] = {"session_id": session_id, "model": model, "soul_path": SOUL_PATH, "soul_name": "SOUL.md (por defecto)"}
     return _user_state[user_id]
@@ -98,7 +98,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ No tienes permiso para usar este bot.")
         return
     await update.message.reply_text(
-        "🤖 *Agente LM Studio activo*\n\n"
+        "🤖 *Asistente Local activo*\n\n"
         "Puedes enviarme:\n"
         "• Mensajes de texto\n"
         "• Imágenes (jpg, png, webp)\n"
@@ -115,7 +115,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = (
         "📋 *Comandos disponibles*\n\n"
         "*Modelo*\n"
-        "/list — Modelos en LM Studio\n"
+        "/list — Modelos disponibles\n"
         "/load `<model>` — Cargar modelo\n"
         "/unload `[model]` — Descargar modelo de memoria\n"
         "/status — Estado y estadisticas\n"
@@ -157,16 +157,16 @@ async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
         return
     try:
-        models = lmstudio.list_models()
+        models = llm_client.list_models()
         if not models:
-            await update.message.reply_text("ℹ️ No hay modelos disponibles en LM Studio.")
+            await update.message.reply_text("ℹ️ No hay modelos disponibles en el backend activo.")
             return
         lines = ["📦 *Modelos disponibles:*\n"]
         for m in models:
             lines.append(f"• `{m.get('id', '-')}`")
         await update.message.reply_text("\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
     except Exception as e:
-        await update.message.reply_text(f"❌ Error conectando con LM Studio:\n`{e}`",
+        await update.message.reply_text(f"❌ Error conectando con el backend:\n`{e}`",
                                         parse_mode=constants.ParseMode.MARKDOWN)
 
 
@@ -181,7 +181,7 @@ async def cmd_load(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     model_id = " ".join(args)
     msg = await update.message.reply_text(f"⏳ Cargando `{model_id}`...", parse_mode=constants.ParseMode.MARKDOWN)
-    ok = lmstudio.load_model(model_id)
+    ok = llm_client.load_model(model_id)
     if ok:
         state["model"] = model_id
         database.update_session_model(state["session_id"], model_id)
@@ -198,10 +198,12 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     state = get_user_state(uid)
     stats = database.get_stats(state["session_id"])
     try:
-        models = lmstudio.list_models()
-        lm_status = f"✅ conectado ({len(models)} modelo(s))"
+        models = llm_client.list_models()
+        from core.llm_client import backend_info
+        lm_status = f"✅ {backend_info()} — {len(models)} modelo(s)"
     except Exception:
-        lm_status = "❌ sin conexión"
+        from core.llm_client import backend_info
+        lm_status = f"❌ {backend_info()} — sin conexión"
 
     text = (
         f"📊 *Estado del Agente*\n\n"
@@ -210,7 +212,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🤖 Modelo: `{state.get('model') or 'ninguno'}`\n"
         f"💬 Mensajes: `{stats['total_messages']}`\n"
         f"🔤 Tokens: `{stats['total_tokens']}`\n"
-        f"🌐 LM Studio: {lm_status}\n"
+        f"🌐 Backend: {lm_status}\n"
         f"🕐 Ahora: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
     )
     await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
@@ -346,12 +348,12 @@ async def cmd_unload(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No hay modelo activo que descargar.")
         return
     msg = await update.message.reply_text("Descargando `" + model_id + "`...", parse_mode=constants.ParseMode.MARKDOWN)
-    ok, result = lmstudio.unload_model(model_id)
+    ok, result = llm_client.unload_model(model_id)
     if ok:
         state["model"] = None
         await msg.edit_text("Modelo descargado: `" + result + "`\nUsa /list y /load para cargar otro.", parse_mode=constants.ParseMode.MARKDOWN)
     else:
-        await msg.edit_text("No se pudo descargar via API: " + result + "\nPrueba desde la interfaz de LM Studio.")
+        await msg.edit_text("No se pudo descargar via API: " + result + "\nEn Ollama no es necesario. En LM Studio, descargalo desde la interfaz.")
 
 
 async def cmd_compact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -374,7 +376,7 @@ async def cmd_compact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Responde SOLO con el resumen, sin preambulos.\n\nCONVERSACION:\n" + conversation[:6000]
     )
     try:
-        summary, _ = lmstudio.chat(model=state["model"],
+        summary, _ = llm_client.chat(model=state["model"],
             messages=[{"role": "user", "content": summary_prompt}],
             temperature=0.3, max_tokens=400)
     except Exception as e:
@@ -913,7 +915,7 @@ async def _respond(update: Update, state: dict, user_text: str, editing_msg=None
         editing_msg = await update.message.reply_text("💭 Pensando...")
 
     try:
-        response_text, tokens = lmstudio.chat(
+        response_text, tokens = llm_client.chat(
             model=state["model"],
             messages=messages,
             temperature=float(os.environ.get("LMSTUDIO_TEMPERATURE", "0.7")),
@@ -930,7 +932,7 @@ async def _respond(update: Update, state: dict, user_text: str, editing_msg=None
 
     except Exception as e:
         logger.exception("Error en respuesta LLM")
-        await editing_msg.edit_text(f"❌ Error: {e}\n¿LM Studio está activo?")
+        await editing_msg.edit_text(f"❌ Error: {e}\n¿El backend está activo?")
 
 
 async def _respond_multimodal(update: Update, state: dict, user_content: list,
@@ -947,7 +949,7 @@ async def _respond_multimodal(update: Update, state: dict, user_content: list,
     await editing_msg.edit_text("💭 Analizando...")
 
     try:
-        response_text, tokens = lmstudio.chat(
+        response_text, tokens = llm_client.chat(
             model=state["model"],
             messages=messages,
             temperature=float(os.environ.get("LMSTUDIO_TEMPERATURE", "0.7")),
@@ -1050,14 +1052,14 @@ async def run_bot(cron: CronManager):
 
     # Registrar LLM en el cron para tareas de tipo llm:
     # Usar el modelo del primer usuario activo, o autodetectar
-    from core.lmstudio import chat as _lm_chat, get_loaded_model as _get_model
+    from core.llm_client import chat as _lm_chat, get_loaded_model as _get_model
     def _best_model():
         # Intentar modelo de cualquier usuario activo
         for uid, st in _user_state.items():
             if st.get("model"):
                 return st["model"]
         return _get_model()
-    cron.set_lmstudio(_lm_chat, _best_model)
+    cron.set_llm(_lm_chat, _best_model)
     # Guardar mensajes del cron llm en el historial
     cron.set_context_callback(
         lambda sid, role, content: database.save_message(sid, role, content)
@@ -1066,7 +1068,7 @@ async def run_bot(cron: CronManager):
     # Registrar comandos en BotFather automáticamente
     await app.bot.set_my_commands([
         BotCommand("help", "Ver todos los comandos"),
-        BotCommand("list", "Modelos en LM Studio"),
+        BotCommand("list", "Modelos disponibles"),
         BotCommand("load", "Cargar modelo"),
         BotCommand("unload", "Descargar modelo de memoria"),
         BotCommand("status", "Estado y estadisticas"),
