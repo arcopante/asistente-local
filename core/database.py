@@ -179,7 +179,11 @@ def delete_session(session_id: int) -> bool:
 
 
 def delete_all_sessions_except(keep_session_id: int) -> int:
-    """Borra todas las sesiones excepto la indicada. Devuelve el numero de sesiones borradas."""
+    """
+    Borra todas las sesiones excepto la indicada y renumera la sesion actual como ID 1.
+    Resetea el autoincrement para que la siguiente sesion empiece desde 2.
+    Devuelve el numero de sesiones borradas.
+    """
     with get_connection() as conn:
         ids = conn.execute(
             "SELECT id FROM sessions WHERE id != ?", (keep_session_id,)
@@ -190,4 +194,14 @@ def delete_all_sessions_except(keep_session_id: int) -> int:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (sid,))
             conn.execute("DELETE FROM stats WHERE session_id = ?", (sid,))
             conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
+
+        # Renumerar la sesion actual como ID 1
+        conn.execute("UPDATE sessions SET id = 1 WHERE id = ?", (keep_session_id,))
+        conn.execute("UPDATE messages SET session_id = 1 WHERE session_id = ?", (keep_session_id,))
+        conn.execute("UPDATE stats SET session_id = 1 WHERE session_id = ?", (keep_session_id,))
+
+        # Resetear el autoincrement para que la proxima sesion sea ID 2
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'sessions'")
+        conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('sessions', 1)")
+
     return count

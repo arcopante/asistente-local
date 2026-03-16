@@ -134,6 +134,14 @@ def run_terminal(state: dict, cron: CronManager):
                 console.print(chunk, end="", markup=False)
                 response_text += chunk
             console.print()
+
+            # Detectar ficheros generados embebidos en la respuesta (data URIs)
+            from core.downloads import extract_generated_files
+            fake_response = {"choices": [{"message": {"content": response_text}}]}
+            gen_files = extract_generated_files(fake_response)
+            for f in gen_files:
+                rprint(f"\n[green]📁 Fichero guardado:[/green] {f['path']}")
+
         except Exception as e:
             rprint(f"\n[red]Error:[/red] {e}")
             continue

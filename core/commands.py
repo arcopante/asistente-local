@@ -205,7 +205,7 @@ def _cmd_compact(state: dict):
     )
 
     try:
-        summary, _ = llm_client.chat(
+        summary, _, _files = llm_client.chat(
             model=state["model"],
             messages=[{"role": "user", "content": summary_prompt}],
             temperature=0.3,
@@ -546,7 +546,8 @@ def _cmd_sessions_clear(state: dict):
         rprint("[yellow]Cancelado.[/yellow]")
         return
     count = database.delete_all_sessions_except(current)
-    rprint(f"[green]{count} sesion(es) eliminadas.[/green] La sesion actual ({current}) se ha conservado.")
+    state["session_id"] = 1
+    rprint(f"[green]{count} sesion(es) eliminadas.[/green] Sesion actual renumerada como ID 1.")
 
 
 # ── Ayuda ─────────────────────────────────────────────────────────────────────

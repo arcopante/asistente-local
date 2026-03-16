@@ -376,7 +376,7 @@ async def cmd_compact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Responde SOLO con el resumen, sin preambulos.\n\nCONVERSACION:\n" + conversation[:6000]
     )
     try:
-        summary, _ = llm_client.chat(model=state["model"],
+        summary, _, _files = llm_client.chat(model=state["model"],
             messages=[{"role": "user", "content": summary_prompt}],
             temperature=0.3, max_tokens=400)
     except Exception as e:
@@ -642,9 +642,9 @@ async def cmd_sessions_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     state = get_user_state(uid)
     current = state.get("session_id")
     count = database.delete_all_sessions_except(current)
+    state["session_id"] = 1
     await update.message.reply_text(
-        f"✅ {count} sesion(es) eliminadas.\nSesion actual (`{current}`) conservada.",
-        parse_mode=constants.ParseMode.MARKDOWN
+        f"✅ {count} sesion(es) eliminadas. Sesion actual renumerada como ID 1.",
     )
 
 
@@ -896,6 +896,25 @@ async def _handle_text_doc(update, state, data: bytes, caption: str, fname: str,
 # ── Respuesta al LLM ──────────────────────────────────────────────────────────
 
 
+async def _send_generated_files(update, files: list):
+    """Envia los ficheros generados por el LLM al chat de Telegram y los guarda en downloads/."""
+    for f in files:
+        fpath = f["path"]
+        label = f.get("label", "Fichero generado")
+        mime = f.get("mime", "")
+        try:
+            with open(fpath, "rb") as fp:
+                if mime.startswith("image/"):
+                    await update.message.reply_photo(photo=fp, caption=f"🖼 {label}: `{fpath.name}`",
+                                                     parse_mode=constants.ParseMode.MARKDOWN)
+                else:
+                    await update.message.reply_document(document=fp, caption=f"📎 {label}: `{fpath.name}`",
+                                                        parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.warning("No se pudo enviar fichero generado %s: %s", fpath, e)
+
+
+
 async def _respond(update: Update, state: dict, user_text: str, editing_msg=None):
     """Envía un mensaje de texto al LLM y responde al usuario."""
     system_prompt = build_system_prompt(state.get("soul_path"))
@@ -915,7 +934,7 @@ async def _respond(update: Update, state: dict, user_text: str, editing_msg=None
         editing_msg = await update.message.reply_text("💭 Pensando...")
 
     try:
-        response_text, tokens = llm_client.chat(
+        response_text, tokens, gen_files = llm_client.chat(
             model=state["model"],
             messages=messages,
             temperature=float(os.environ.get("LMSTUDIO_TEMPERATURE", "0.7")),
@@ -924,11 +943,18 @@ async def _respond(update: Update, state: dict, user_text: str, editing_msg=None
         database.save_message(state["session_id"], "assistant", response_text, tokens)
 
         # Telegram tiene límite de 4096 chars por mensaje
-        if len(response_text) > 4000:
-            await editing_msg.edit_text(response_text[:4000])
-            await update.message.reply_text(response_text[4000:])
-        else:
-            await editing_msg.edit_text(response_text)
+        if response_text:
+            if len(response_text) > 4000:
+                await editing_msg.edit_text(response_text[:4000])
+                await update.message.reply_text(response_text[4000:])
+            else:
+                await editing_msg.edit_text(response_text)
+        elif gen_files:
+            await editing_msg.delete()
+
+        # Enviar ficheros generados por el LLM
+        if gen_files:
+            await _send_generated_files(update, gen_files)
 
     except Exception as e:
         logger.exception("Error en respuesta LLM")
@@ -949,7 +975,7 @@ async def _respond_multimodal(update: Update, state: dict, user_content: list,
     await editing_msg.edit_text("💭 Analizando...")
 
     try:
-        response_text, tokens = llm_client.chat(
+        response_text, tokens, gen_files = llm_client.chat(
             model=state["model"],
             messages=messages,
             temperature=float(os.environ.get("LMSTUDIO_TEMPERATURE", "0.7")),
@@ -957,11 +983,17 @@ async def _respond_multimodal(update: Update, state: dict, user_content: list,
         )
         database.save_message(state["session_id"], "assistant", response_text, tokens)
 
-        if len(response_text) > 4000:
-            await editing_msg.edit_text(response_text[:4000])
-            await update.message.reply_text(response_text[4000:])
-        else:
-            await editing_msg.edit_text(response_text)
+        if response_text:
+            if len(response_text) > 4000:
+                await editing_msg.edit_text(response_text[:4000])
+                await update.message.reply_text(response_text[4000:])
+            else:
+                await editing_msg.edit_text(response_text)
+        elif gen_files:
+            await editing_msg.delete()
+
+        if gen_files:
+            await _send_generated_files(update, gen_files)
 
     except Exception as e:
         logger.exception("Error en respuesta multimodal")

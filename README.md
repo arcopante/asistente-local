@@ -1,9 +1,11 @@
-# 🤖 Asistente Local v5
+# 🤖 Asistente Local v5.1
 
 **Asistente conversacional que corre completamente en tu máquina.**  
 Conectado a [LM Studio](https://lmstudio.ai) u [Ollama](https://ollama.com), controlable por terminal y por Telegram, con memoria persistente, tareas programadas y herramientas del sistema.
 
 Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
+
+> Compatible con **LM Studio** y **Ollama**.
 
 ---
 
@@ -18,6 +20,7 @@ Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
 | 🛠️ **Herramientas del sistema** | Ejecuta comandos, lee ficheros, abre apps, inspecciona el sistema |
 | 🎙️ **Audio y voz** | Transcripción automática de notas de voz y audios con Whisper local |
 | 📄 **Documentos** | Procesa PDFs, imágenes y ficheros de texto enviados por Telegram |
+| 🖼️ **Generación de imágenes** | Si el modelo genera imágenes, las guarda en `downloads/` y las envía por Telegram |
 | 🔒 **Seguridad** | Filtro de comandos peligrosos en dos niveles |
 | 📱 **Telegram** | Bot completo con los mismos comandos que la terminal |
 
@@ -98,10 +101,12 @@ asistente/
 ├── MEMORY.md             # 🧠 Memoria persistente (no subir a git)
 ├── souls/                # 🎭 Personalidades adicionales
 │   ├── trabajo.md
-│   └── dev.md
+│   ├── dev.md
+│   └── hacking.md
 │
 ├── history.db            # 🗃️  Historial SQLite (no subir a git)
 ├── cron_jobs.json        # 📅 Tareas programadas (no subir a git)
+├── downloads/            # 🖼️  Ficheros generados por el LLM (imágenes, docs)
 │
 └── core/
     ├── database.py       # 🗃️  Historial en SQLite
@@ -110,7 +115,8 @@ asistente/
     ├── cron_manager.py   # ⏰ Gestor de tareas programadas
     ├── telegram_bot.py   # 📱 Bot de Telegram
     ├── tools.py          # 🛠️  Herramientas del sistema
-    └── transcriber.py    # 🎙️  Transcripción de audio (Whisper)
+    ├── transcriber.py    # 🎙️  Transcripción de audio (Whisper)
+    └── downloads.py      # 🖼️  Gestión de ficheros generados por el LLM
 ```
 
 ---
@@ -191,6 +197,19 @@ El cron es interno, no usa el cron del sistema. Las tareas sobreviven a reinicio
 |---|---|
 | `/help` | Ayuda completa |
 | `/exit` | Cierra el asistente |
+
+---
+
+## 🖼️ Generación de imágenes y documentos
+
+Si usas un modelo con capacidades de generación de imágenes (como modelos multimodales
+compatibles con LM Studio u Ollama), el asistente detecta automáticamente los ficheros
+generados en la respuesta y los gestiona sin configuración adicional.
+
+- Los ficheros se guardan en la carpeta `downloads/` con nombre y timestamp
+- En Telegram se envían directamente al chat como imagen o documento
+- En terminal se muestra la ruta del fichero guardado
+- Soporta imágenes PNG, JPEG, WebP, GIF y documentos PDF
 
 ---
 

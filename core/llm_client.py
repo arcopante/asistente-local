@@ -182,8 +182,12 @@ def chat(
     messages: List[dict],
     temperature: float = 0.7,
     max_tokens: int = 2048,
-) -> Tuple[str, int]:
-    """Genera respuesta completa. Devuelve (texto, tokens_usados)."""
+) -> Tuple[str, int, list]:
+    """
+    Genera respuesta completa.
+    Devuelve (texto, tokens_usados, ficheros_generados).
+    ficheros_generados es una lista de dicts {"path", "mime", "label"} o [] si no hay.
+    """
     payload = {
         "model": model,
         "messages": messages,
@@ -195,9 +199,22 @@ def chat(
         r = c.post("/chat/completions", json=payload)
         r.raise_for_status()
         data = r.json()
-        content = _strip_thinking(data["choices"][0]["message"]["content"])
+
+        # Extraer texto
+        raw_content = data["choices"][0]["message"].get("content") or ""
+        if isinstance(raw_content, list):
+            text = " ".join(b.get("text", "") for b in raw_content if b.get("type") == "text")
+        else:
+            text = raw_content
+        text = _strip_thinking(text)
+
         tokens = data.get("usage", {}).get("total_tokens", 0)
-        return content, tokens
+
+        # Extraer ficheros generados (imagenes, documentos)
+        from core.downloads import extract_generated_files
+        files = extract_generated_files(data)
+
+        return text, tokens, files
 
 
 # ── Helpers especificos de Ollama ─────────────────────────────────────────────

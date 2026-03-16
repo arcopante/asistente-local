@@ -231,7 +231,7 @@ class CronManager:
                 "Fecha y hora actual: " + datetime.now().strftime("%Y-%m-%d %H:%M") + "\n\n"
                 + prompt
             )
-            text, _ = self._llm_chat(
+            text, _, _files = self._llm_chat(
                 model=model,
                 messages=[{"role": "user", "content": full_prompt}],
                 temperature=0.8,
