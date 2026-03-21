@@ -1,16 +1,14 @@
 """
-llm_client.py — Cliente LLM generico compatible con LM Studio y Ollama.
+llm_client.py — Cliente LLM generico compatible con LM Studio, Ollama y OpenRouter.
 
-Ambos exponen una API compatible con OpenAI en /v1, por lo que chat,
-streaming y listado de modelos funcionan igual en los dos backends.
-
-Las operaciones especificas de cada backend (cargar/descargar modelos)
-se implementan por separado segun BACKEND.
+Los tres exponen una API compatible con OpenAI en /v1.
 
 Variables de entorno relevantes (configuradas en start.sh):
-  BACKEND                  lmstudio | ollama  (por defecto: lmstudio)
+  BACKEND                  lmstudio | ollama | openrouter  (por defecto: lmstudio)
   LMSTUDIO_HOST            http://localhost:1234
   OLLAMA_HOST              http://localhost:11434
+  OPENROUTER_API_KEY       sk-or-...
+  OPENROUTER_MODEL         mistralai/mistral-7b-instruct  (obligatorio con openrouter)
 """
 
 import json
@@ -18,12 +16,12 @@ import os
 import httpx
 from typing import Iterator, Optional, List, Tuple
 
-# ── Configuracion ─────────────────────────────────────────────────────────────
+
+# ── Helpers internos ──────────────────────────────────────────────────────────
 
 def _strip_thinking(text: str) -> str:
     """Elimina bloques de razonamiento interno (<think>...</think>) de la respuesta."""
     import re
-    # Elimina bloques <think>...</think> incluyendo variantes con saltos de linea
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     return text.strip()
 
@@ -31,15 +29,50 @@ def _strip_thinking(text: str) -> str:
 def _backend() -> str:
     return os.environ.get("BACKEND", "lmstudio").lower()
 
+
 def _base_url() -> str:
-    if _backend() == "ollama":
+    b = _backend()
+    if b == "ollama":
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
         return host + "/v1"
+    if b == "openrouter":
+        return "https://openrouter.ai/api/v1"
     host = os.environ.get("LMSTUDIO_HOST", "http://localhost:1234").rstrip("/")
     return host + "/v1"
 
+
+def _headers() -> dict:
+    """Cabeceras HTTP. OpenRouter requiere Authorization y cabeceras opcionales."""
+    b = _backend()
+    if b == "openrouter":
+        key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not key:
+            raise RuntimeError("OPENROUTER_API_KEY no configurado en start.sh")
+        return {
+            "Authorization": "Bearer " + key,
+            "HTTP-Referer": "https://github.com/arcopante/asistente-local",
+            "X-Title": "Asistente Local",
+        }
+    return {}
+
+
 def _client() -> httpx.Client:
-    return httpx.Client(base_url=_base_url(), timeout=120.0)
+    return httpx.Client(base_url=_base_url(), headers=_headers(), timeout=120.0)
+
+
+def _resolve_model(model: Optional[str]) -> str:
+    """
+    Resuelve el modelo a usar.
+    En OpenRouter el modelo es obligatorio y se puede fijar en start.sh.
+    En LM Studio y Ollama se usa el que venga del estado del agente.
+    """
+    if _backend() == "openrouter":
+        return (
+            model
+            or os.environ.get("OPENROUTER_MODEL", "")
+            or "mistralai/mistral-7b-instruct"
+        )
+    return model or ""
 
 
 # ── Modelos ───────────────────────────────────────────────────────────────────
@@ -53,7 +86,9 @@ def list_models() -> List[dict]:
 
 
 def get_loaded_model() -> Optional[str]:
-    """Devuelve el primer modelo disponible."""
+    """Devuelve el modelo activo. En OpenRouter devuelve el configurado en start.sh."""
+    if _backend() == "openrouter":
+        return os.environ.get("OPENROUTER_MODEL", "mistralai/mistral-7b-instruct")
     models = list_models()
     return models[0].get("id") if models else None
 
@@ -61,12 +96,16 @@ def get_loaded_model() -> Optional[str]:
 def load_model(model_id: str) -> bool:
     """
     Carga un modelo.
-    - LM Studio: no tiene endpoint explicito, se provoca con una inferencia minima.
-    - Ollama: pull del modelo si no esta descargado, luego lo activa automaticamente.
+    - LM Studio: inferencia minima para forzar la carga.
+    - Ollama: pull automatico si no esta descargado.
+    - OpenRouter: no aplica, el modelo se selecciona por parametro.
     """
+    if _backend() == "openrouter":
+        # En OpenRouter no hay carga local; simplemente actualizamos la variable
+        os.environ["OPENROUTER_MODEL"] = model_id
+        return True
     if _backend() == "ollama":
         return _ollama_pull(model_id)
-    # LM Studio: forzar carga con inferencia minima
     with _client() as c:
         try:
             r = c.post("/chat/completions", json={
@@ -83,12 +122,14 @@ def load_model(model_id: str) -> bool:
 def unload_model(model_id: Optional[str] = None) -> Tuple[bool, str]:
     """
     Descarga un modelo de memoria.
-    - LM Studio: usa el endpoint no documentado DELETE /api/v0/models/<id>.
-    - Ollama: no soporta descarga de memoria via API (los modelos se descargan solos).
-    Devuelve (ok, mensaje).
+    - LM Studio: endpoint DELETE /api/v0/models/<id>.
+    - Ollama / OpenRouter: no aplica.
     """
-    if _backend() == "ollama":
-        return False, "Ollama gestiona la memoria automaticamente. No es necesario descargar modelos manualmente."
+    b = _backend()
+    if b == "ollama":
+        return False, "Ollama gestiona la memoria automaticamente."
+    if b == "openrouter":
+        return False, "OpenRouter es un servicio en la nube, no hay modelo local que descargar."
 
     if not model_id:
         model_id = get_loaded_model()
@@ -104,7 +145,7 @@ def unload_model(model_id: Optional[str] = None) -> Tuple[bool, str]:
             r2 = c.post("/api/v0/models/unload", json={"identifier": model_id})
             if r2.status_code in (200, 204):
                 return True, model_id
-            return False, "LM Studio respondio " + str(r.status_code) + ". Puede que esta version no soporte descarga via API."
+            return False, "LM Studio respondio " + str(r.status_code)
     except Exception as e:
         return False, str(e)
 
@@ -117,19 +158,18 @@ def chat_stream(
     temperature: float = 0.7,
     max_tokens: int = 2048,
 ) -> Iterator[str]:
-    """Genera respuesta en streaming. Compatible con LM Studio y Ollama.
-    Filtra bloques <think>...</think> de modelos con razonamiento visible."""
+    """Genera respuesta en streaming. Filtra bloques <think>...</think>."""
     payload = {
-        "model": model,
+        "model": _resolve_model(model),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,
     }
-    in_think = False   # True mientras estamos dentro de un bloque <think>
-    buf = ""           # buffer para detectar etiquetas partidas entre chunks
+    in_think = False
+    buf = ""
 
-    with httpx.Client(base_url=_base_url(), timeout=120.0) as c:
+    with httpx.Client(base_url=_base_url(), headers=_headers(), timeout=120.0) as c:
         with c.stream("POST", "/chat/completions", json=payload) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -150,10 +190,10 @@ def chat_stream(
                             if in_think:
                                 end = buf.find("</think>")
                                 if end != -1:
-                                    buf = buf[end + 8:]  # saltar </think>
+                                    buf = buf[end + 8:]
                                     in_think = False
                                 else:
-                                    buf = ""  # consumir todo, seguimos en think
+                                    buf = ""
                             else:
                                 start = buf.find("<think>")
                                 if start != -1:
@@ -161,7 +201,6 @@ def chat_stream(
                                     buf = buf[start + 7:]
                                     in_think = True
                                 else:
-                                    # Guardar posible inicio de etiqueta incompleta
                                     if buf.endswith("<"):
                                         out += buf[:-1]
                                         buf = "<"
@@ -169,7 +208,6 @@ def chat_stream(
                                     else:
                                         out += buf
                                         buf = ""
-
                         if out:
                             yield out
 
@@ -186,10 +224,9 @@ def chat(
     """
     Genera respuesta completa.
     Devuelve (texto, tokens_usados, ficheros_generados).
-    ficheros_generados es una lista de dicts {"path", "mime", "label"} o [] si no hay.
     """
     payload = {
-        "model": model,
+        "model": _resolve_model(model),
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -200,7 +237,6 @@ def chat(
         r.raise_for_status()
         data = r.json()
 
-        # Extraer texto
         raw_content = data["choices"][0]["message"].get("content") or ""
         if isinstance(raw_content, list):
             text = " ".join(b.get("text", "") for b in raw_content if b.get("type") == "text")
@@ -210,7 +246,6 @@ def chat(
 
         tokens = data.get("usage", {}).get("total_tokens", 0)
 
-        # Extraer ficheros generados (imagenes, documentos)
         from core.downloads import extract_generated_files
         files = extract_generated_files(data)
 
@@ -230,11 +265,16 @@ def _ollama_pull(model_id: str) -> bool:
         return False
 
 
+# ── Info del backend ──────────────────────────────────────────────────────────
+
 def backend_info() -> str:
-    """Devuelve una cadena descriptiva del backend activo y su URL."""
+    """Devuelve una cadena descriptiva del backend activo."""
     b = _backend()
     if b == "ollama":
         host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         return "Ollama (" + host + ")"
+    if b == "openrouter":
+        model = os.environ.get("OPENROUTER_MODEL", "no configurado")
+        return "OpenRouter (modelo: " + model + ")"
     host = os.environ.get("LMSTUDIO_HOST", "http://localhost:1234")
     return "LM Studio (" + host + ")"

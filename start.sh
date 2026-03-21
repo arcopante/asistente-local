@@ -19,6 +19,10 @@ export LMSTUDIO_HOST="http://localhost:1234"   # URL del servidor LM Studio
 # ── Ollama ───────────────────────────────────────────────────
 export OLLAMA_HOST="http://localhost:11434"    # URL del servidor Ollama
 
+# ── OpenRouter ───────────────────────────────────────────────
+export OPENROUTER_API_KEY=""                   # sk-or-... (obtener en openrouter.ai/keys)
+export OPENROUTER_MODEL=""                     # Ej: mistralai/mistral-7b-instruct
+
 export LMSTUDIO_DEFAULT_MODEL=""               # Modelo por defecto (vacío = autodetectar)
 export LMSTUDIO_MAX_TOKENS="2048"              # Tokens máximos por respuesta
 export LMSTUDIO_TEMPERATURE="0.7"              # Temperatura (0.0 = determinista, 1.0 = creativo)

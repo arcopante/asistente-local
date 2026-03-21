@@ -7,6 +7,12 @@ Configurado mediante variables de entorno (ver start.sh)
 
 import sys
 import os
+import warnings
+
+# Suprimir warnings de librerias de terceros antes de cualquier import
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch")
+warnings.filterwarnings("ignore", category=UserWarning, module="TTS")
 import signal
 import asyncio
 import logging

@@ -1,11 +1,11 @@
-# 🤖 Asistente Local v5.1
+# 🤖 Asistente Local v5.2
 
 **Asistente conversacional que corre completamente en tu máquina.**  
 Conectado a [LM Studio](https://lmstudio.ai) u [Ollama](https://ollama.com), controlable por terminal y por Telegram, con memoria persistente, tareas programadas y herramientas del sistema.
 
 Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
 
-> Compatible con **LM Studio** y **Ollama**.
+> Compatible con **LM Studio**, **Ollama** y **OpenRouter**.
 
 ---
 
@@ -21,6 +21,7 @@ Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
 | 🎙️ **Audio y voz** | Transcripción automática de notas de voz y audios con Whisper local |
 | 📄 **Documentos** | Procesa PDFs, imágenes y ficheros de texto enviados por Telegram |
 | 🖼️ **Generación de imágenes** | Si el modelo genera imágenes, las guarda en `downloads/` y las envía por Telegram |
+| 🔊 **Voz clonada (TTS)** | Responde con tu propia voz clonada usando Coqui XTTS-v2, 100% local |
 | 🔒 **Seguridad** | Filtro de comandos peligrosos en dos niveles |
 | 📱 **Telegram** | Bot completo con los mismos comandos que la terminal |
 
@@ -31,7 +32,7 @@ Sin suscripciones. Sin APIs de pago. Sin datos en la nube.
 ### Requisitos
 
 - Python 3.9+
-- [LM Studio](https://lmstudio.ai) **o** [Ollama](https://ollama.com) con el servidor local activo
+- [LM Studio](https://lmstudio.ai), [Ollama](https://ollama.com) o [OpenRouter](https://openrouter.ai) como backend LLM
 - Token de bot de Telegram (opcional, solo si usas el modo Telegram)
 
 ### 1 — Clonar y configurar
@@ -79,6 +80,16 @@ ollama pull llama3.2      # descarga el modelo que quieras usar
 ```
 Luego en `start.sh` cambia `BACKEND="ollama"`.
 
+**Opción C — OpenRouter:**
+1. Crea una cuenta en [openrouter.ai](https://openrouter.ai) y obtén tu API key
+2. En `start.sh` configura:
+```bash
+export BACKEND="openrouter"
+export OPENROUTER_API_KEY="sk-or-..."
+export OPENROUTER_MODEL="mistralai/mistral-7b-instruct"
+```
+Puedes ver todos los modelos disponibles en [openrouter.ai/models](https://openrouter.ai/models).
+
 ### 4 — Arrancar
 
 ```bash
@@ -116,7 +127,8 @@ asistente/
     ├── telegram_bot.py   # 📱 Bot de Telegram
     ├── tools.py          # 🛠️  Herramientas del sistema
     ├── transcriber.py    # 🎙️  Transcripción de audio (Whisper)
-    └── downloads.py      # 🖼️  Gestión de ficheros generados por el LLM
+    ├── downloads.py      # 🖼️  Gestión de ficheros generados por el LLM
+    └── tts_engine.py     # 🔊 Síntesis de voz con clonación (Coqui XTTS-v2)
 ```
 
 ---
@@ -195,8 +207,9 @@ El cron es interno, no usa el cron del sistema. Las tareas sobreviven a reinicio
 
 | Comando | Descripción |
 |---|---|
-| `/help` | Ayuda completa |
+| `/help` / `/ayuda` | Ayuda completa |
 | `/exit` | Cierra el asistente |
+| `/voz on\|off` | Activa o desactiva las respuestas por voz clonada |
 
 ---
 
@@ -210,6 +223,30 @@ generados en la respuesta y los gestiona sin configuración adicional.
 - En Telegram se envían directamente al chat como imagen o documento
 - En terminal se muestra la ruta del fichero guardado
 - Soporta imágenes PNG, JPEG, WebP, GIF y documentos PDF
+
+---
+
+## 🔊 Voz clonada (TTS)
+
+El asistente puede responder con tu propia voz clonada usando [Coqui XTTS-v2](https://github.com/coqui-ai/TTS), completamente en local.
+
+**Configuración:**
+
+1. Graba un audio de tu voz de al menos 10-30 segundos en formato WAV y ponlo en el directorio raíz del agente (junto a `agent.py`)
+2. En `start.sh` configura:
+```bash
+export TTS_VOICE_SAMPLE="voz_origen.wav"   # nombre del fichero WAV de muestra
+export TTS_LANGUAGE="es"                    # idioma de síntesis
+```
+3. Instala las dependencias de voz (requiere Python 3.10, descarga ~2GB):
+```bash
+./setup.sh --voz
+```
+4. Activa la voz desde Telegram con `/voz on` y desactívala con `/voz off`
+
+La primera vez que se use tardará unos segundos en cargar el modelo XTTS-v2. Las siguientes respuestas son más rápidas.
+
+> **Nota:** Los mensajes internos de Coqui TTS están suprimidos. Cuando la voz está activa el bot muestra `🔊 Generando audio...` mientras sintetiza y envía únicamente la nota de voz, sin texto.
 
 ---
 
@@ -248,18 +285,24 @@ Los comandos se filtran en dos niveles antes de ejecutarse:
 
 | Variable | Por defecto | Descripción |
 |---|---|---|
-| `BACKEND` | `lmstudio` | Backend LLM: `lmstudio` o `ollama` |
+| `BACKEND` | `lmstudio` | Backend LLM: `lmstudio`, `ollama` o `openrouter` |
 | `TELEGRAM_TOKEN` | — | Token del bot (de @BotFather) |
 | `TELEGRAM_ALLOWED_USERS` | vacío (todos) | IDs de usuario separados por coma |
 | `TELEGRAM_MAX_FILE_MB` | `20` | Tamaño máximo de fichero |
 | `LMSTUDIO_HOST` | `http://localhost:1234` | URL del servidor LM Studio |
 | `OLLAMA_HOST` | `http://localhost:11434` | URL del servidor Ollama |
+| `OPENROUTER_API_KEY` | — | API key de OpenRouter (openrouter.ai/keys) |
+| `OPENROUTER_MODEL` | — | Modelo a usar, ej: `mistralai/mistral-7b-instruct` |
 | `LMSTUDIO_DEFAULT_MODEL` | vacío (autodetectar) | Modelo al arrancar |
 | `LMSTUDIO_MAX_TOKENS` | `2048` | Tokens máximos por respuesta |
 | `LMSTUDIO_TEMPERATURE` | `0.7` | Temperatura del modelo |
 | `LMSTUDIO_CONTEXT_MESSAGES` | `30` | Mensajes de historial enviados al LLM |
 | `AGENT_MODE` | `terminal` | `terminal` · `telegram` · `both` |
 | `AGENT_LOG_LEVEL` | `WARNING` | `DEBUG` · `INFO` · `WARNING` · `ERROR` |
+| `TTS_ENABLED` | `false` | Activar respuesta por voz: `true` o `false` |
+| `TTS_VOICE_SAMPLE` | — | Ruta al WAV de muestra de tu voz |
+| `TTS_LANGUAGE` | `es` | Idioma de síntesis: `es`, `en`, `fr`... |
+| `TTS_DEVICE` | `cpu` | `cpu` o `cuda` (GPU) |
 | `WHISPER_MODEL` | `base` | Modelo de transcripción de audio |
 | `WHISPER_DEVICE` | `cpu` | `cpu` o `cuda` (GPU) |
 | `WHISPER_LANGUAGE` | vacío (auto) | Código de idioma: `es`, `en`, `fr`... |

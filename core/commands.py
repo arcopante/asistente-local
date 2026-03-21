@@ -85,6 +85,11 @@ def handle_command(cmd_line: str, state: dict, cron: CronManager) -> bool:
 # ── Modelo ────────────────────────────────────────────────────────────────────
 
 def _cmd_list():
+    if llm_client._backend() == "openrouter":
+        rprint("[yellow]OpenRouter tiene cientos de modelos.[/yellow]")
+        rprint("Consulta el catalogo completo en: [link=https://openrouter.ai/models]https://openrouter.ai/models[/link]")
+        rprint(f"Modelo activo: [cyan]{llm_client.get_loaded_model()}[/cyan]")
+        return
     try:
         models = llm_client.list_models()
         if not models:

@@ -22,7 +22,7 @@ from telegram.ext import (
     filters,
 )
 
-from core import database, llm_client
+from core import database, llm_client, tts_engine
 from core.cron_manager import CronManager
 
 logger = logging.getLogger(__name__)
@@ -149,12 +149,23 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/sessions — Ultimas sesiones\n"
         "/sessionsdel `<id>` — Borrar sesion por ID\n"
         "/sessionsclear — Borrar todas excepto la actual\n"
+        "/voz `on|off` — Activar/desactivar respuesta por voz clonada\n"
+        "/exit — Apagar el agente\n"
     )
     await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
 
 
 async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update.effective_user.id):
+        return
+    if llm_client._backend() == "openrouter":
+        model = llm_client.get_loaded_model()
+        await update.message.reply_text(
+            "OpenRouter tiene cientos de modelos disponibles.\n"
+            "Consulta el catalogo en: https://openrouter.ai/models\n\n"
+            "Modelo activo: `" + model + "`",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
         return
     try:
         models = llm_client.list_models()
@@ -896,6 +907,24 @@ async def _handle_text_doc(update, state, data: bytes, caption: str, fname: str,
 # ── Respuesta al LLM ──────────────────────────────────────────────────────────
 
 
+async def _send_voice(update, text: str):
+    """Sintetiza texto con la voz clonada y lo envia como nota de voz."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        wav_path = await loop.run_in_executor(None, tts_engine.synthesize_chunks, text)
+        if not wav_path:
+            logger.warning("TTS no genero audio.")
+            return
+        with open(wav_path, "rb") as f:
+            await update.message.reply_voice(voice=f)
+        from pathlib import Path
+        Path(wav_path).unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("Error enviando voz: %s", e)
+
+
+
 async def _send_generated_files(update, files: list):
     """Envia los ficheros generados por el LLM al chat de Telegram y los guarda en downloads/."""
     for f in files:
@@ -942,19 +971,26 @@ async def _respond(update: Update, state: dict, user_text: str, editing_msg=None
         )
         database.save_message(state["session_id"], "assistant", response_text, tokens)
 
-        # Telegram tiene límite de 4096 chars por mensaje
-        if response_text:
+        # Enviar ficheros generados por el LLM
+        if gen_files:
+            await editing_msg.delete()
+            await _send_generated_files(update, gen_files)
+
+        # Modo voz: esperar al audio y enviar solo eso (sin texto)
+        elif response_text and tts_engine.is_enabled():
+            await editing_msg.edit_text("🔊 Generando audio...")
+            await _send_voice(update, response_text)
+            await editing_msg.delete()
+
+        # Modo texto normal
+        elif response_text:
             if len(response_text) > 4000:
                 await editing_msg.edit_text(response_text[:4000])
                 await update.message.reply_text(response_text[4000:])
             else:
                 await editing_msg.edit_text(response_text)
-        elif gen_files:
+        else:
             await editing_msg.delete()
-
-        # Enviar ficheros generados por el LLM
-        if gen_files:
-            await _send_generated_files(update, gen_files)
 
     except Exception as e:
         logger.exception("Error en respuesta LLM")
@@ -1011,6 +1047,47 @@ async def cmd_exit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     os.kill(os.getpid(), signal.SIGTERM)
 
 
+async def cmd_voz(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Activa o desactiva la respuesta por voz clonada."""
+    if not is_allowed(update.effective_user.id):
+        return
+
+    arg = (ctx.args[0].lower() if ctx.args else "").strip()
+
+    if arg == "on":
+        if not tts_engine.is_available():
+            await update.message.reply_text(
+                "❌ Coqui TTS no esta instalado.\n"
+                "Ejecuta: `pip install TTS`",
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+            return
+        if not tts_engine.get_voice_sample():
+            await update.message.reply_text(
+                "❌ No hay muestra de voz configurada.\n"
+                "Define `TTS_VOICE_SAMPLE` en start.sh con la ruta a tu fichero WAV.",
+                parse_mode=constants.ParseMode.MARKDOWN
+            )
+            return
+        tts_engine.set_enabled(True)
+        await update.message.reply_text("🔊 Voz activada. Las respuestas se enviarán como audio.")
+
+    elif arg == "off":
+        tts_engine.set_enabled(False)
+        await update.message.reply_text("🔇 Voz desactivada. Las respuestas serán de texto.")
+
+    else:
+        estado = "🔊 activada" if tts_engine.is_enabled() else "🔇 desactivada"
+        sample = tts_engine.get_voice_sample() or "no configurada"
+        await update.message.reply_text(
+            f"Voz: {estado}\n"
+            f"Muestra: `{sample}`\n\n"
+            "Uso: `/voz on` | `/voz off`",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+
+
+
 def build_application(cron: CronManager) -> Application:
     """Construye y configura la aplicación de Telegram."""
     token = os.environ.get("TELEGRAM_TOKEN", "")
@@ -1025,6 +1102,7 @@ def build_application(cron: CronManager) -> Application:
     # Comandos de texto
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("ayuda", cmd_help))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("load", cmd_load))
     app.add_handler(CommandHandler("status", cmd_status))
@@ -1036,6 +1114,7 @@ def build_application(cron: CronManager) -> Application:
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("souls", cmd_souls))
     app.add_handler(CommandHandler("exit", cmd_exit))
+    app.add_handler(CommandHandler("voz", cmd_voz))
     app.add_handler(CommandHandler("soul", cmd_soul_change))
     app.add_handler(CommandHandler("run", cmd_run))
     app.add_handler(CommandHandler("open", cmd_open_app))
@@ -1100,6 +1179,8 @@ async def run_bot(cron: CronManager):
     # Registrar comandos en BotFather automáticamente
     await app.bot.set_my_commands([
         BotCommand("help", "Ver todos los comandos"),
+        BotCommand("ayuda", "Ver todos los comandos (alias)"),
+        BotCommand("voz", "Activar/desactivar respuesta por voz"),
         BotCommand("list", "Modelos disponibles"),
         BotCommand("load", "Cargar modelo"),
         BotCommand("unload", "Descargar modelo de memoria"),
@@ -1110,6 +1191,7 @@ async def run_bot(cron: CronManager):
         BotCommand("search", "Buscar en el historial"),
         BotCommand("souls", "Ver personalidades disponibles"),
         BotCommand("exit", "Apagar el agente"),
+        BotCommand("voz", "Activar/desactivar respuesta por voz"),
         BotCommand("soul", "Cambiar personalidad"),
         BotCommand("run", "Ejecutar comando de shell"),
         BotCommand("open", "Abrir aplicacion o fichero"),

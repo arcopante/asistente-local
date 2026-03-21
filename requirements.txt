@@ -1,29 +1,47 @@
 # ============================================================
-#  requirements.txt — Dependencias del Agente LM Studio
+#  requirements.txt — Dependencias del Asistente Local
 # ============================================================
 #
-#  Instalación:
+#  Instalación base (se hace automáticamente con ./setup.sh):
 #    pip install -r requirements.txt
 #
-#  O usando el entorno virtual creado por setup.sh:
-#    source .venv/bin/activate
-#    pip install -r requirements.txt
+#  Para la clonación de voz (opcional), ver sección TTS al final
+#  o ejecutar: ./setup.sh --voz
 # ============================================================
 
 # ── HTTP / API ────────────────────────────────────────────────
-# Cliente HTTP async/sync. Usado para comunicarse con LM Studio.
+# Cliente HTTP async/sync para comunicarse con LM Studio / Ollama / OpenRouter
 httpx>=0.27.0
 
 # ── Interfaz de terminal ──────────────────────────────────────
-# Terminal enriquecido: colores, tablas, paneles, markdown.
+# Terminal enriquecido: colores, tablas, paneles, markdown
 rich>=13.7.0
 
 # ── Bot de Telegram ───────────────────────────────────────────
-# Framework oficial async para bots de Telegram.
-# Incluye httpx como transporte y soporte HTTP/2.
+# Framework oficial async para bots de Telegram
 python-telegram-bot[http2]>=21.0
 
-# ── Procesamiento de PDF ──────────────────────────────────────
-# Extracción de texto de ficheros PDF enviados por Telegram.
+# ── Procesamiento de documentos ───────────────────────────────
+# Extracción de texto de ficheros PDF enviados por Telegram
 pypdf>=4.0.0
+
+# ── Transcripción de audio (Whisper) ──────────────────────────
+# Transcripción local de notas de voz y ficheros de audio
 faster-whisper>=1.0.0
+
+# ============================================================
+#  DEPENDENCIAS OPCIONALES — Clonación de voz (TTS)
+#  Requiere Python 3.10.x (ver setup.sh --voz)
+#  Instalación manual o con: ./setup.sh --voz
+# ============================================================
+#
+# torch==2.4.0
+# torchaudio==2.4.0
+# TTS>=0.22.0
+# sounddevice
+# soundfile
+# numpy
+# transformers==4.37.2
+# tokenizers==0.15.2
+# openai-whisper
+# openai
