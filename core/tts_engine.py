@@ -24,6 +24,24 @@ from typing import Optional
 
 logger = logging.getLogger("tts_engine")
 
+BASE_DIR   = Path(__file__).parent.parent
+AUDIOS_DIR = BASE_DIR / "audios"
+
+
+def _ensure_audios_dir() -> Path:
+    """Crea la carpeta audios/ si no existe."""
+    AUDIOS_DIR.mkdir(exist_ok=True)
+    return AUDIOS_DIR
+
+
+def _audio_filename(session_id: Optional[int] = None) -> Path:
+    """Genera un nombre de fichero unico para el audio guardado."""
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sid = ("_s" + str(session_id)) if session_id else ""
+    return _ensure_audios_dir() / f"audio_{ts}{sid}.wav"
+
+
 # El modelo se carga una sola vez y se cachea
 _tts_model = None
 
@@ -155,10 +173,10 @@ def synthesize(text: str, output_path: Optional[str] = None) -> Optional[str]:
         return None
 
 
-def synthesize_chunks(text: str) -> Optional[str]:
+def synthesize_chunks(text: str, session_id: Optional[int] = None) -> Optional[str]:
     """
     Sintetiza textos largos dividiendo en frases y concatenando el audio.
-    Devuelve la ruta al WAV final, o None si falla.
+    Guarda una copia permanente en audios/ y devuelve la ruta al WAV temporal.
     """
     import re
 
@@ -180,7 +198,10 @@ def synthesize_chunks(text: str) -> Optional[str]:
         return None
 
     if len(chunks) == 1:
-        return synthesize(chunks[0])
+        tmp_path = synthesize(chunks[0])
+        if tmp_path:
+            _save_audio_copy(tmp_path, session_id)
+        return tmp_path
 
     # Sintetizar cada chunk y concatenar
     try:
@@ -209,8 +230,20 @@ def synthesize_chunks(text: str) -> Optional[str]:
         for f in tmp_files:
             Path(f).unlink(missing_ok=True)
 
+        _save_audio_copy(out_path, session_id)
         return out_path
 
     except Exception as e:
         logger.error("Error concatenando audio: %s", e)
         return None
+
+
+def _save_audio_copy(tmp_path: str, session_id: Optional[int] = None):
+    """Guarda una copia permanente del audio en audios/."""
+    import shutil
+    try:
+        dest = _audio_filename(session_id)
+        shutil.copy2(tmp_path, dest)
+        logger.debug("Audio guardado en %s", dest)
+    except Exception as e:
+        logger.warning("No se pudo guardar copia del audio: %s", e)

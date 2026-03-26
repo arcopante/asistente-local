@@ -36,6 +36,8 @@ def handle_command(cmd_line: str, state: dict, cron: CronManager) -> bool:
         _cmd_load(arg, state)
     elif cmd == "/unload":
         _cmd_unload(arg, state)
+    elif cmd == "/motorllm":
+        _cmd_motorllm(arg, state)
     elif cmd == "/status":
         _cmd_status(state)
     elif cmd == "/reset":
@@ -62,15 +64,17 @@ def handle_command(cmd_line: str, state: dict, cron: CronManager) -> bool:
         _cmd_sysinfo()
     elif cmd == "/cron":
         _cmd_cron(arg, cron)
-    elif cmd == "/cron-list":
+    elif cmd == "/cronlist":
         _cmd_cron_list(cron)
-    elif cmd == "/cron-del":
+    elif cmd == "/crondel":
         _cmd_cron_del(arg, cron)
+    elif cmd == "/cronclear":
+        _cmd_cron_clear(cron)
     elif cmd == "/sessions":
         _cmd_sessions()
-    elif cmd == "/sessions-del":
+    elif cmd == "/sessionsdel":
         _cmd_sessions_del(arg, state)
-    elif cmd == "/sessions-clear":
+    elif cmd == "/sessionsclear":
         _cmd_sessions_clear(state)
     elif cmd == "/help":
         _cmd_help()
@@ -139,6 +143,47 @@ def _cmd_unload(arg: str, state: dict):
     else:
         rprint(f"[yellow]No se pudo descargar via API:[/yellow] {msg}")
         rprint("  En Ollama prueba: ollama pull <modelo>. En LM Studio descargalo desde la interfaz.")
+
+
+
+def _cmd_motorllm(arg: str, state: dict):
+    """Cambia el backend LLM en caliente sin reiniciar el agente."""
+    backends = ("lmstudio", "ollama", "openrouter")
+
+    if not arg:
+        current = llm_client._backend()
+        table = Table(title="Backend LLM", show_lines=True)
+        table.add_column("Backend", style="cyan")
+        table.add_column("Estado", style="green")
+        table.add_column("Host / Info")
+        info = {
+            "lmstudio":   os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"),
+            "ollama":     os.environ.get("OLLAMA_HOST",   "http://localhost:11434"),
+            "openrouter": "modelo: " + os.environ.get("OPENROUTER_MODEL", "no configurado"),
+        }
+        for b in backends:
+            estado = "[bold green]activo[/bold green]" if b == current else ""
+            table.add_row(b, estado, info[b])
+        console.print(table)
+        rprint("[dim]Uso: /motorllm <lmstudio|ollama|openrouter>[/dim]")
+        return
+
+    arg = arg.lower().strip()
+    if arg not in backends:
+        rprint(f"[red]Backend desconocido:[/red] {arg}")
+        rprint("Backends disponibles: " + ", ".join(backends))
+        return
+
+    # Validar requisitos antes de cambiar
+    if arg == "openrouter":
+        if not os.environ.get("OPENROUTER_API_KEY", "").strip():
+            rprint("[red]OPENROUTER_API_KEY no configurado.[/red] Añádelo en start.sh y reinicia.")
+            return
+
+    os.environ["BACKEND"] = arg
+    state["model"] = llm_client.get_loaded_model()
+    rprint(f"[green]Backend cambiado a:[/green] {arg}")
+    rprint(f"[dim]Modelo activo: {state['model'] or 'ninguno'}[/dim]")
 
 
 def _cmd_status(state: dict):
@@ -476,7 +521,7 @@ def _cmd_cron_list(cron: CronManager):
 
 def _cmd_cron_del(arg: str, cron: CronManager):
     if not arg:
-        rprint("[yellow]Uso: /cron-del <id>[/yellow]")
+        rprint("[yellow]Uso: /crondel <id>[/yellow]")
         return
     try:
         job_id = int(arg)
@@ -519,10 +564,25 @@ def _cmd_sessions():
 
 
 
+
+def _cmd_cron_clear(cron):
+    """Borra todas las tareas y elimina cron_jobs.json."""
+    try:
+        answer = input("  Borrar todas las tareas programadas? [s/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        rprint("[yellow]Cancelado.[/yellow]")
+        return
+    if answer not in ("s", "si", "y", "yes"):
+        rprint("[yellow]Cancelado.[/yellow]")
+        return
+    cron.clear_all()
+    rprint("[green]Todas las tareas eliminadas.[/green]")
+
+
 def _cmd_sessions_del(arg: str, state: dict):
     """Borra una sesion concreta por ID. No permite borrar la sesion activa."""
     if not arg:
-        rprint("[yellow]Uso: /sessions-del <id>[/yellow]")
+        rprint("[yellow]Uso: /sessionsdel <id>[/yellow]")
         return
     try:
         session_id = int(arg)
@@ -590,12 +650,13 @@ def _cmd_help():
         ("", "Ej: /cron 09:00 Buenos dias"),
         ("", "Ej: /cron */1h llm: Consejo motivacional"),
         ("", "Ej: /cron 08:00 shell: ~/backup.sh"),
-        ("/cron-list", "Lista tareas (muestra tipo con icono)"),
-        ("/cron-del <id>", "Elimina una tarea"),
+        ("/cronlist", "Lista tareas (muestra tipo con icono)"),
+        ("/crondel <id>", "Elimina una tarea"),
+        ("/cronclear", "Borra todas las tareas y el fichero cron_jobs.json"),
         ("── General ──", ""),
         ("/sessions", "Ultimas sesiones con resumen"),
-        ("/sessions-del <id>", "Borra una sesion por ID"),
-        ("/sessions-clear", "Borra todas excepto la actual"),
+        ("/sessionsdel <id>", "Borra una sesion por ID"),
+        ("/sessionsclear", "Borra todas excepto la actual"),
         ("/help", "Esta ayuda"),
         ("/exit", "Sale del agente"),
     ]

@@ -145,6 +145,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "_Ej:_ `/cron 08:00 shell: ~/scripts/backup.sh`\n"
         "/cronlist — Ver tareas (con icono de tipo)\n"
         "/crondel `<id>` — Eliminar tarea\n"
+        "/cronclear — Borrar todas las tareas\n"
         "\n*General*\n"
         "/sessions — Ultimas sesiones\n"
         "/sessionsdel `<id>` — Borrar sesion por ID\n"
@@ -153,6 +154,51 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/exit — Apagar el agente\n"
     )
     await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
+
+async def cmd_motorllm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        return
+    uid = update.effective_user.id
+    state = get_user_state(uid)
+    backends = ("lmstudio", "ollama", "openrouter")
+    arg = (ctx.args[0].lower().strip() if ctx.args else "")
+
+    if not arg:
+        current = llm_client._backend()
+        info = {
+            "lmstudio":   os.environ.get("LMSTUDIO_HOST", "http://localhost:1234"),
+            "ollama":     os.environ.get("OLLAMA_HOST",   "http://localhost:11434"),
+            "openrouter": "modelo: " + os.environ.get("OPENROUTER_MODEL", "no configurado"),
+        }
+        lines = ["\U0001f50c *Backend LLM actual:* `" + current + "`\n"]
+        for b in backends:
+            marker = "\u2705" if b == current else "\u2b1c"
+            lines.append(marker + " `" + b + "` \u2014 " + info[b])
+        lines.append("\n_Uso: /motorllm `<lmstudio|ollama|openrouter>`_")
+        await update.message.reply_text("\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+        return
+
+    if arg not in backends:
+        await update.message.reply_text(
+            "Backend desconocido: `" + arg + "`\nDisponibles: `lmstudio`, `ollama`, `openrouter`",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return
+
+    if arg == "openrouter" and not os.environ.get("OPENROUTER_API_KEY", "").strip():
+        await update.message.reply_text(
+            "OPENROUTER_API_KEY no configurado. Añadelo en start.sh y reinicia.",
+        )
+        return
+
+    os.environ["BACKEND"] = arg
+    state["model"] = llm_client.get_loaded_model()
+    modelo = state["model"] or "ninguno"
+    await update.message.reply_text(
+        "Backend cambiado a `" + arg + "`\nModelo activo: `" + modelo + "`",
+        parse_mode=constants.ParseMode.MARKDOWN
+    )
+
 
 
 async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -264,7 +310,7 @@ async def cmd_cron(update: Update, ctx: ContextTypes.DEFAULT_TYPE, cron: CronMan
             "Texto fijo: `/cron 09:00 Buenos dias`\n"
             "LLM genera msg: `/cron */1h llm: Consejo de productividad`\n"
             "Ejecutar comando: `/cron 08:00 shell: ~/scripts/backup.sh`\n\n"
-            "*Formatos de horario:* `HH:MM` | `*/Nm` | `*/Nh`",
+            "*Formatos de horario:* `HH:MM` | `HH:MM-HH:MM` (aleatorio) | `*/Nm` | `*/Nh`",
             parse_mode=constants.ParseMode.MARKDOWN,
         )
         return
@@ -290,7 +336,9 @@ async def cmd_cron(update: Update, ctx: ContextTypes.DEFAULT_TYPE, cron: CronMan
         type_label = "Notificacion"
 
     # Para tareas llm, guardar en el historial del usuario que crea la tarea
-    sid = state.get('session_id') if job_type == JOB_LLM else None
+    uid = update.effective_user.id
+    user_state = get_user_state(uid)
+    sid = user_state.get("session_id") if job_type == JOB_LLM else None
     job_id = cron.add_job(schedule, action, job_type=job_type,
                           telegram_chat_id=chat_id, session_id=sid)
     if job_id:
@@ -317,6 +365,13 @@ async def cmd_cronlist(update: Update, ctx: ContextTypes.DEFAULT_TYPE, cron: Cro
         lines.append(icon + " ID `" + str(j["id"]) + "` | `" + j["schedule"] + "` | _" + j["action"] + "_")
         lines.append("  Proxima: `" + j.get("next_run", "-")[:16] + "`")
     await update.message.reply_text("\n".join(lines), parse_mode=constants.ParseMode.MARKDOWN)
+
+
+async def cmd_cronclear(update: Update, ctx: ContextTypes.DEFAULT_TYPE, cron: CronManager):
+    if not is_allowed(update.effective_user.id):
+        return
+    cron.clear_all()
+    await update.message.reply_text("✅ Todas las tareas eliminadas.")
 
 
 async def cmd_crondel(update: Update, ctx: ContextTypes.DEFAULT_TYPE, cron: CronManager):
@@ -907,12 +962,15 @@ async def _handle_text_doc(update, state, data: bytes, caption: str, fname: str,
 # ── Respuesta al LLM ──────────────────────────────────────────────────────────
 
 
-async def _send_voice(update, text: str):
+async def _send_voice(update, text: str, state: dict = None):
     """Sintetiza texto con la voz clonada y lo envia como nota de voz."""
     import asyncio
     try:
         loop = asyncio.get_event_loop()
-        wav_path = await loop.run_in_executor(None, tts_engine.synthesize_chunks, text)
+        sid = state.get("session_id") if state else None
+        wav_path = await loop.run_in_executor(
+            None, lambda: tts_engine.synthesize_chunks(text, session_id=sid)
+        )
         if not wav_path:
             logger.warning("TTS no genero audio.")
             return
@@ -979,7 +1037,7 @@ async def _respond(update: Update, state: dict, user_text: str, editing_msg=None
         # Modo voz: esperar al audio y enviar solo eso (sin texto)
         elif response_text and tts_engine.is_enabled():
             await editing_msg.edit_text("🔊 Generando audio...")
-            await _send_voice(update, response_text)
+            await _send_voice(update, response_text, state)
             await editing_msg.delete()
 
         # Modo texto normal
@@ -1097,6 +1155,30 @@ def build_application(cron: CronManager) -> Application:
     # Inyectar callback de cron para notificaciones Telegram
     cron.set_telegram_send_callback(_make_telegram_sender(token))
 
+    # Registrar callbacks de TTS para el cron
+    # synthesize_fn: sintetiza texto -> wav_path (sincrono, corre en executor)
+    # voice_sender_fn: envia wav por Telegram a un chat_id (asincrono)
+    from core import tts_engine as _tts
+    def _cron_synthesize(text: str):
+        """Solo sintetiza si TTS esta activo."""
+        if not _tts.is_enabled():
+            return None
+        return _tts.synthesize_chunks(text, session_id=None)
+
+    async def _cron_voice_sender(chat_id: int, wav_path: str):
+        """Envia un WAV como nota de voz a un chat_id via HTTP directo."""
+        try:
+            with open(wav_path, "rb") as f:
+                audio_data = f.read()
+            url = f"https://api.telegram.org/bot{token}/sendVoice"
+            async with httpx.AsyncClient() as client:
+                await client.post(url, data={"chat_id": chat_id},
+                                  files={"voice": ("voice.wav", audio_data, "audio/wav")})
+        except Exception as e:
+            logger.warning("Error enviando voz en cron: %s", e)
+
+    cron.set_tts_callbacks(_cron_synthesize, _cron_voice_sender)
+
     app = Application.builder().token(token).build()
 
     # Comandos de texto
@@ -1110,6 +1192,7 @@ def build_application(cron: CronManager) -> Application:
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("sessions", cmd_sessions))
     app.add_handler(CommandHandler("unload", cmd_unload))
+    app.add_handler(CommandHandler("motorllm", cmd_motorllm))
     app.add_handler(CommandHandler("compact", cmd_compact))
     app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("souls", cmd_souls))
@@ -1129,6 +1212,7 @@ def build_application(cron: CronManager) -> Application:
     app.add_handler(CommandHandler("cron", lambda u, c: cmd_cron(u, c, cron)))
     app.add_handler(CommandHandler("cronlist", lambda u, c: cmd_cronlist(u, c, cron)))
     app.add_handler(CommandHandler("crondel", lambda u, c: cmd_crondel(u, c, cron)))
+    app.add_handler(CommandHandler("cronclear", lambda u, c: cmd_cronclear(u, c, cron)))
 
     # Mensajes de texto
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
@@ -1184,6 +1268,7 @@ async def run_bot(cron: CronManager):
         BotCommand("list", "Modelos disponibles"),
         BotCommand("load", "Cargar modelo"),
         BotCommand("unload", "Descargar modelo de memoria"),
+        BotCommand("motorllm", "Cambiar motor LLM (lmstudio/ollama/openrouter)"),
         BotCommand("status", "Estado y estadisticas"),
         BotCommand("reset", "Resetear contexto"),
         BotCommand("memory", "Guardar en memoria"),
@@ -1202,6 +1287,7 @@ async def run_bot(cron: CronManager):
         BotCommand("cron", "Programar tarea"),
         BotCommand("cronlist", "Ver tareas programadas"),
         BotCommand("crondel", "Eliminar tarea"),
+        BotCommand("cronclear", "Borrar todas las tareas"),
         BotCommand("sessions", "Ver sesiones anteriores"),
         BotCommand("sessionsdel", "Borrar una sesion por ID"),
         BotCommand("sessionsclear", "Borrar todas las sesiones excepto la actual"),

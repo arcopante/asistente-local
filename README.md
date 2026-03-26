@@ -118,6 +118,7 @@ asistente/
 ├── history.db            # 🗃️  Historial SQLite (no subir a git)
 ├── cron_jobs.json        # 📅 Tareas programadas (no subir a git)
 ├── downloads/            # 🖼️  Ficheros generados por el LLM (imágenes, docs)
+├── audios/               # 🔊 Historial de audios generados por TTS (no subir a git)
 │
 └── core/
     ├── database.py       # 🗃️  Historial en SQLite
@@ -160,8 +161,8 @@ Los mismos comandos funcionan en terminal y en Telegram.
 | Comando | Descripción |
 |---|---|
 | `/sessions` | Lista las últimas sesiones |
-| `/sessions-del <id>` | Borra una sesión por ID |
-| `/sessions-clear` | Borra todas las sesiones excepto la actual |
+| `/sessionsdel <id>` | Borra una sesión por ID |
+| `/sessionsclear` | Borra todas las sesiones excepto la actual |
 
 ### SOULs — personalidades
 
@@ -191,17 +192,19 @@ El cron es interno, no usa el cron del sistema. Las tareas sobreviven a reinicio
 **Tres tipos de tarea:**
 
 ```bash
-/cron 09:00 Buenos días                        # 🔔 Notificación de texto fijo
+/cron 09:00 Buenos días                        # 🔔 A las 9:00 exactas
+/cron 08:00-10:00 Buenos días                  # 🔔 Entre las 8 y las 10 (hora aleatoria)
 /cron */1h llm: Resume las tareas pendientes   # 🤖 El LLM genera el mensaje
 /cron 23:00 shell: ~/backup.sh                 # ⚙️  Ejecuta un script
 ```
 
-**Formatos de horario:** `HH:MM` (diario) · `*/Nm` (cada N minutos) · `*/Nh` (cada N horas)
+**Formatos de horario:** `HH:MM` (diario) · `HH:MM-HH:MM` (aleatorio dentro del rango) · `*/Nm` (cada N minutos) · `*/Nh` (cada N horas)
 
 | Comando | Descripción |
 |---|---|
-| `/cron-list` | Lista las tareas activas |
-| `/cron-del <id>` | Elimina una tarea |
+| `/cronlist` | Lista las tareas activas |
+| `/crondel <id>` | Elimina una tarea |
+| `/cronclear` | Borra todas las tareas y el fichero `cron_jobs.json` |
 
 ### General
 
@@ -245,6 +248,8 @@ export TTS_LANGUAGE="es"                    # idioma de síntesis
 4. Activa la voz desde Telegram con `/voz on` y desactívala con `/voz off`
 
 La primera vez que se use tardará unos segundos en cargar el modelo XTTS-v2. Las siguientes respuestas son más rápidas.
+
+Cada audio generado se guarda automáticamente en la carpeta `audios/` con nombre `audio_YYYYMMDD_HHMMSS_sN.wav`, donde `N` es el ID de sesión.
 
 > **Nota:** Los mensajes internos de Coqui TTS están suprimidos. Cuando la voz está activa el bot muestra `🔊 Generando audio...` mientras sintetiza y envía únicamente la nota de voz, sin texto.
 

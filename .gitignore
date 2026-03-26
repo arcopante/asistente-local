@@ -4,6 +4,12 @@
 # Base de datos con historial personal
 history.db
 
+# Ficheros generados por el LLM
+downloads/
+
+# Audios generados por TTS
+audios/
+
 # Memoria y configuración personal
 MEMORY.md
 

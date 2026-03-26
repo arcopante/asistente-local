@@ -76,7 +76,10 @@ def detect_model() -> Optional[str]:
 
 
 def cron_notify(message: str):
+    console.print("")
     console.print(Panel(message, style="bold yellow", title="🔔 Recordatorio"))
+    console.print("")
+    console.print("[bold green]Tú[/bold green]: ", end="")
 
 
 # ── Modo terminal ─────────────────────────────────────────────────────────────

@@ -28,6 +28,9 @@ JOB_LLM    = "llm"      # Generar mensaje con el LLM
 JOB_SHELL  = "shell"    # Ejecutar comando del sistema
 
 
+_print_lock = threading.Lock()
+
+
 class CronManager:
     def __init__(self, notify_callback: Callable[[str], None] = None):
         self._jobs = {}
@@ -39,6 +42,8 @@ class CronManager:
         self._llm_chat = None   # funcion chat(model, messages) -> (text, tokens)
         self._active_model = None    # modelo activo del agente
         self._save_to_context = None # callback(session_id, role, content) para guardar en BD
+        self._tts_send = None         # callable(text) -> wav_path  para sintetizar
+        self._tts_voice_sender = None  # async callable(chat_id, wav_path) para enviar audio
         self._running = False
         self._thread = None
         self._load_jobs()
@@ -66,6 +71,15 @@ class CronManager:
         callback: callable(session_id, role, content) -> None
         """
         self._save_to_context = callback
+
+    def set_tts_callbacks(self, synthesize_fn, voice_sender_fn):
+        """
+        Registra los callbacks de TTS.
+        synthesize_fn   : callable(text) -> wav_path  (sintetiza texto a WAV)
+        voice_sender_fn : async callable(chat_id, wav_path)  (envia el WAV por Telegram)
+        """
+        self._tts_send = synthesize_fn
+        self._tts_voice_sender = voice_sender_fn
 
     # ── API publica ───────────────────────────────────────────────────────────
 
@@ -118,6 +132,14 @@ class CronManager:
                 return True
         return False
 
+    def clear_all(self):
+        """Borra todas las tareas y elimina cron_jobs.json."""
+        with self._lock:
+            self._jobs = {}
+            self._next_id = 1
+        if JOBS_FILE.exists():
+            JOBS_FILE.unlink()
+
     def list_jobs(self) -> List[dict]:
         with self._lock:
             return list(self._jobs.values())
@@ -157,16 +179,15 @@ class CronManager:
 
     def _execute_notify(self, job: dict, timestamp: str):
         action = job["action"]
-        message = "[" + timestamp + "] " + action
         self._system_notify("Recordatorio (" + timestamp + ")", action)
-        self._terminal_notify("🔔 " + message)
-        self._send_telegram(job, "🔔 " + message)
+        self._terminal_notify("🔔 Enviando recordatorio de las " + timestamp)
+        self._send_telegram(job, action)
 
     # ── Tipo: shell ───────────────────────────────────────────────────────────
 
     def _execute_shell(self, job: dict, timestamp: str):
         cmd = job["action"]
-        self._terminal_notify("⚙️ [cron " + timestamp + "] Ejecutando: " + cmd)
+        self._terminal_notify("⚙️ Ejecutando tarea shell de las " + timestamp)
         try:
             # Seguridad: aplicar los mismos filtros que run_shell
             from core.tools import is_blocked
@@ -188,17 +209,17 @@ class CronManager:
 
             status = "OK" if proc.returncode == 0 else "Error (codigo " + str(proc.returncode) + ")"
             summary = "[cron " + timestamp + "] " + status + "\n$ " + cmd + "\n" + output
-            self._terminal_notify(summary)
-            self._send_telegram(job, "⚙️ " + summary)
+            self._terminal_notify("⚙️ Tarea shell de las " + timestamp + ": " + status)
+            self._send_telegram(job, output)
 
         except subprocess.TimeoutExpired:
             msg = "[cron] Timeout ejecutando: " + cmd
             self._terminal_notify(msg)
-            self._send_telegram(job, "⏱️ " + msg)
+            self._send_telegram(job, "Timeout ejecutando el comando.")
         except Exception as e:
             msg = "[cron] Error: " + str(e)
             self._terminal_notify(msg)
-            self._send_telegram(job, "❌ " + msg)
+            self._send_telegram(job, "Error ejecutando el comando.")
 
     # ── Tipo: llm ─────────────────────────────────────────────────────────────
 
@@ -207,7 +228,7 @@ class CronManager:
         if not self._llm_chat:
             msg = "[cron] ERROR: LLM no registrado. El cron llm: requiere que el agente este activo con un modelo cargado."
             self._terminal_notify(msg)
-            self._send_telegram(job, "❌ " + msg)
+            self._send_telegram(job, "Error ejecutando el comando.")
             return
 
         # Obtener modelo activo
@@ -220,11 +241,11 @@ class CronManager:
         if not model:
             msg = "[cron] Sin modelo activo. Carga un modelo con /load antes de usar cron llm:"
             self._terminal_notify(msg)
-            self._send_telegram(job, "❌ " + msg)
+            self._send_telegram(job, "Error ejecutando el comando.")
             return
 
         prompt = job["action"]
-        self._terminal_notify("🤖 [cron " + timestamp + "] Generando con LLM (modelo: " + model + ")...")
+        self._terminal_notify("🤖 Enviando recordatorio LLM de las " + timestamp)
 
         try:
             full_prompt = (
@@ -238,7 +259,7 @@ class CronManager:
                 max_tokens=512,
             )
             text = text.strip()
-            message = "🤖 [" + timestamp + "]\n" + text
+            message = text
 
             # Guardar en el historial para dar continuidad al chat
             session_id = job.get("session_id")
@@ -250,39 +271,95 @@ class CronManager:
                 except Exception as e:
                     print("[cron] Error guardando en contexto: " + str(e), flush=True)
 
-            self._terminal_notify(message)
+            # Mostrar en terminal solo si TTS no esta activo
+            try:
+                from core import tts_engine as _tts
+                tts_active = _tts.is_enabled()
+            except Exception:
+                tts_active = False
+            if not tts_active:
+                with _print_lock:
+                    self._terminal_notify("🤖 Recordatorio LLM de las " + timestamp + " enviado.")
             self._send_telegram(job, message)
 
         except Exception as e:
             msg = "[cron] Error LLM: " + str(e)
             self._terminal_notify(msg)
-            self._send_telegram(job, "❌ " + msg)
+            self._send_telegram(job, "Error ejecutando el comando.")
 
     # ── Utilidades ────────────────────────────────────────────────────────────
 
     def _send_telegram(self, job: dict, message: str):
+        """
+        Envia mensaje al chat de Telegram.
+        Si TTS esta activo (_tts_send registrado), sintetiza y envia audio.
+        Sino envia texto plano.
+        """
         chat_id = job.get("telegram_chat_id")
-        if chat_id and self._telegram_send and self._loop:
-            try:
+        if not chat_id or not self._loop:
+            return
+        try:
+            if self._tts_send:
+                # Sintetizar en el hilo del cron y enviar audio
+                asyncio.run_coroutine_threadsafe(
+                    self._send_voice_cron(chat_id, message), self._loop
+                )
+            elif self._telegram_send:
                 asyncio.run_coroutine_threadsafe(
                     self._telegram_send(chat_id, message), self._loop
                 )
-            except Exception as e:
-                print("[cron] Error Telegram: " + str(e), flush=True)
+        except Exception as e:
+            print("[cron] Error Telegram: " + str(e), flush=True)
+
+    async def _send_voice_cron(self, chat_id: int, message: str):
+        """Sintetiza el mensaje con TTS y lo envia como nota de voz."""
+        import asyncio as _asyncio
+        from pathlib import Path
+        try:
+            loop = _asyncio.get_event_loop()
+            # _tts_send es un callable(text) -> wav_path  que corre en executor
+            wav_path = await loop.run_in_executor(None, self._tts_send, message)
+            if wav_path and Path(wav_path).exists():
+                await self._tts_voice_sender(chat_id, wav_path)
+                Path(wav_path).unlink(missing_ok=True)
+                # Confirmacion en terminal
+                timestamp = datetime.now().strftime("%H:%M")
+                self._default_notify("\U0001f50a Recordatorio de voz de las " + timestamp + " enviado.")
+            else:
+                # Fallback a texto si TTS falla
+                if self._telegram_send:
+                    await self._telegram_send(chat_id, message)
+        except Exception as e:
+            print("[cron] Error voz: " + str(e), flush=True)
+            if self._telegram_send:
+                await self._telegram_send(chat_id, message)
 
     def _system_notify(self, title: str, message: str):
+        """Envia notificacion del sistema en un subproceso no bloqueante."""
         system = platform.system()
         try:
             if system == "Darwin":
                 script = 'display notification "' + message + '" with title "' + title + '" sound name "Ping"'
-                subprocess.run(["osascript", "-e", script], check=False, timeout=5)
+                # Popen en lugar de run para no bloquear el hilo del cron
+                subprocess.Popen(
+                    ["osascript", "-e", script],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
             elif system == "Linux":
-                subprocess.run(["notify-send", title, message, "--urgency=normal"], check=False, timeout=5)
+                subprocess.Popen(
+                    ["notify-send", title, message, "--urgency=normal"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
         except Exception:
             pass
 
     def _calc_next_run(self, schedule: str) -> Optional[datetime]:
+        import random
         now = datetime.now()
+
+        # HH:MM — diario a hora fija
         if re.fullmatch(r"\d{1,2}:\d{2}", schedule):
             try:
                 h, m = map(int, schedule.split(":"))
@@ -292,12 +369,36 @@ class CronManager:
                 return target
             except ValueError:
                 return None
+
+        # HH:MM-HH:MM — diario a hora aleatoria dentro del rango
+        m_range = re.fullmatch(r"(\d{1,2}:\d{2})-(\d{1,2}:\d{2})", schedule)
+        if m_range:
+            try:
+                h1, m1 = map(int, m_range.group(1).split(":"))
+                h2, m2 = map(int, m_range.group(2).split(":"))
+                start_min = h1 * 60 + m1
+                end_min   = h2 * 60 + m2
+                if end_min <= start_min:
+                    return None
+                rand_min = random.randint(start_min, end_min)
+                target = now.replace(hour=rand_min // 60, minute=rand_min % 60,
+                                     second=0, microsecond=0)
+                if target <= now:
+                    target += timedelta(days=1)
+                return target
+            except ValueError:
+                return None
+
+        # */Nm — cada N minutos
         m_min = re.fullmatch(r"\*/(\d+)m", schedule)
         if m_min:
             return now + timedelta(minutes=int(m_min.group(1)))
+
+        # */Nh — cada N horas
         m_hr = re.fullmatch(r"\*/(\d+)h", schedule)
         if m_hr:
             return now + timedelta(hours=int(m_hr.group(1)))
+
         return None
 
     def _save_jobs(self):
@@ -318,4 +419,6 @@ class CronManager:
 
     @staticmethod
     def _default_notify(message: str):
-        print(message, flush=True)
+        with _print_lock:
+            print("\n" + message, flush=True)
+            print("\n\033[1;32mTú\033[0m: ", end="", flush=True)
