@@ -150,7 +150,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/sessions — Ultimas sesiones\n"
         "/sessionsdel `<id>` — Borrar sesion por ID\n"
         "/sessionsclear — Borrar todas excepto la actual\n"
-        "/voz `on|off` — Activar/desactivar respuesta por voz clonada\n"
+        "/voz `clonada|sistema|off` — Activar/desactivar respuesta por voz\n"
         "/exit — Apagar el agente\n"
     )
     await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
@@ -1106,43 +1106,68 @@ async def cmd_exit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_voz(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Activa o desactiva la respuesta por voz clonada."""
+    """Activa/desactiva TTS y muestra el estado actual."""
     if not is_allowed(update.effective_user.id):
         return
 
-    arg = (ctx.args[0].lower() if ctx.args else "").strip()
+    arg = (ctx.args[0].lower().strip() if ctx.args else "")
+    modos = ("clonada", "sistema", "off")
 
-    if arg == "on":
+    if not arg:
+        modo = tts_engine.get_mode()
+        voz  = tts_engine.get_system_voice() or "(defecto del sistema)"
+        rate = tts_engine.get_system_rate()
+        icons = {"clonada": "🎙", "sistema": "🔊", "false": "🔇"}
+        icon  = icons.get(modo, "🔇")
+        await update.message.reply_text(
+            icon + " *Voz:* `" + modo + "`\n"
+            "Voz sistema: `" + voz + "`\n"
+            "Velocidad: `" + str(rate) + "` ppm\n\n"
+            "_Uso: /voz `clonada` | /voz `sistema` | /voz `off`_",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return
+
+    if arg not in modos:
+        await update.message.reply_text(
+            "Modo desconocido: `" + arg + "`\nUsa: `clonada`, `sistema` o `off`",
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+        return
+
+    if arg == "clonada":
         if not tts_engine.is_available():
             await update.message.reply_text(
-                "❌ Coqui TTS no esta instalado.\n"
-                "Ejecuta: `pip install TTS`",
+                "❌ Coqui TTS no instalado.\nEjecuta: `pip install TTS`",
                 parse_mode=constants.ParseMode.MARKDOWN
             )
             return
         if not tts_engine.get_voice_sample():
             await update.message.reply_text(
-                "❌ No hay muestra de voz configurada.\n"
-                "Define `TTS_VOICE_SAMPLE` en start.sh con la ruta a tu fichero WAV.",
+                "❌ `TTS_VOICE_SAMPLE` no configurado en start.sh",
                 parse_mode=constants.ParseMode.MARKDOWN
             )
             return
-        tts_engine.set_enabled(True)
-        await update.message.reply_text("🔊 Voz activada. Las respuestas se enviarán como audio.")
+        tts_engine.set_mode("clonada")
+        await update.message.reply_text("🎙 Voz clonada activada.")
 
-    elif arg == "off":
-        tts_engine.set_enabled(False)
-        await update.message.reply_text("🔇 Voz desactivada. Las respuestas serán de texto.")
-
-    else:
-        estado = "🔊 activada" if tts_engine.is_enabled() else "🔇 desactivada"
-        sample = tts_engine.get_voice_sample() or "no configurada"
+    elif arg == "sistema":
+        if not tts_engine.is_sistema_available():
+            await update.message.reply_text(
+                "❌ No hay motor TTS del sistema disponible.\nInstala espeak o espeak-ng.",
+            )
+            return
+        tts_engine.set_mode("sistema")
+        voz  = tts_engine.get_system_voice() or "(defecto)"
+        rate = tts_engine.get_system_rate()
         await update.message.reply_text(
-            f"Voz: {estado}\n"
-            f"Muestra: `{sample}`\n\n"
-            "Uso: `/voz on` | `/voz off`",
+            "🔊 Voz del sistema activada.\nVoz: `" + voz + "` | Velocidad: `" + str(rate) + "` ppm",
             parse_mode=constants.ParseMode.MARKDOWN
         )
+
+    else:
+        tts_engine.set_mode("false")
+        await update.message.reply_text("🔇 Voz desactivada.")
 
 
 
@@ -1264,7 +1289,7 @@ async def run_bot(cron: CronManager):
     await app.bot.set_my_commands([
         BotCommand("help", "Ver todos los comandos"),
         BotCommand("ayuda", "Ver todos los comandos (alias)"),
-        BotCommand("voz", "Activar/desactivar respuesta por voz"),
+        BotCommand("voz", "Voz: clonada / sistema / off"),
         BotCommand("list", "Modelos disponibles"),
         BotCommand("load", "Cargar modelo"),
         BotCommand("unload", "Descargar modelo de memoria"),
@@ -1276,7 +1301,7 @@ async def run_bot(cron: CronManager):
         BotCommand("search", "Buscar en el historial"),
         BotCommand("souls", "Ver personalidades disponibles"),
         BotCommand("exit", "Apagar el agente"),
-        BotCommand("voz", "Activar/desactivar respuesta por voz"),
+        BotCommand("voz", "Voz: clonada / sistema / off"),
         BotCommand("soul", "Cambiar personalidad"),
         BotCommand("run", "Ejecutar comando de shell"),
         BotCommand("open", "Abrir aplicacion o fichero"),

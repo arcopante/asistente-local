@@ -33,6 +33,18 @@ export WHISPER_MODEL="base"                    # tiny | base | small | medium | 
 export WHISPER_DEVICE="cpu"                    # cpu | cuda (si tienes GPU compatible)
 export WHISPER_LANGUAGE=""                     # es, en, fr... (vacío = autodetectar)
 
+# ── Voz (TTS) ───────────────────────────────────────────────────────────────
+export TTS_ENABLED="false"                     # false | clonada | sistema
+
+# Modo clonada (Coqui XTTS-v2)
+export TTS_VOICE_SAMPLE="voz_origen.wav"       # ruta al WAV de muestra de tu voz
+export TTS_LANGUAGE="es"                       # es, en, fr, de, ...
+export TTS_DEVICE="cpu"                        # cpu | cuda
+
+# Modo sistema (say en macOS / espeak en Linux)
+export TTS_SYSTEM_VOICE="Paulina"              # macOS: Paulina, Monica, Jorge... Linux: es
+export TTS_SYSTEM_RATE="175"                   # palabras por minuto
+
 # ── Agente ───────────────────────────────────────────────────
 export AGENT_MODE="both"                       # terminal | telegram | both
 export AGENT_LOG_LEVEL="WARNING"               # DEBUG | INFO | WARNING | ERROR

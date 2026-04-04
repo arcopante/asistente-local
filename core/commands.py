@@ -78,6 +78,8 @@ def handle_command(cmd_line: str, state: dict, cron: CronManager) -> bool:
         _cmd_sessions_clear(state)
     elif cmd == "/help":
         _cmd_help()
+    elif cmd == "/voz":
+        _cmd_voz(arg)
     elif cmd in ("/exit", "/quit"):
         rprint("[yellow]Hasta luego.[/yellow]")
         raise SystemExit(0)
@@ -613,6 +615,50 @@ def _cmd_sessions_clear(state: dict):
     count = database.delete_all_sessions_except(current)
     state["session_id"] = 1
     rprint(f"[green]{count} sesion(es) eliminadas.[/green] Sesion actual renumerada como ID 1.")
+
+
+def _cmd_voz(arg: str):
+    """Activa/desactiva TTS y muestra estado."""
+    from core import tts_engine
+    modos = ("clonada", "sistema", "off")
+    arg = arg.lower().strip()
+
+    if not arg:
+        modo = tts_engine.get_mode()
+        voz  = tts_engine.get_system_voice() or "(por defecto del sistema)"
+        rate = tts_engine.get_system_rate()
+        rprint(f"[bold]Voz:[/bold] {modo}")
+        rprint(f"[dim]Voz sistema: {voz}  |  Velocidad: {rate} ppm[/dim]")
+        rprint("[dim]Uso: /voz clonada | /voz sistema | /voz off[/dim]")
+        return
+
+    if arg not in modos:
+        rprint(f"[red]Modo desconocido:[/red] {arg}. Usa: clonada | sistema | off")
+        return
+
+    if arg == "clonada":
+        if not tts_engine.is_available():
+            rprint("[red]Coqui TTS no instalado.[/red] Ejecuta: pip install TTS")
+            return
+        if not tts_engine.get_voice_sample():
+            rprint("[red]TTS_VOICE_SAMPLE no configurado en start.sh[/red]")
+            return
+        tts_engine.set_mode("clonada")
+        rprint("[green]Voz clonada activada.[/green]")
+
+    elif arg == "sistema":
+        if not tts_engine.is_sistema_available():
+            rprint("[red]No se encontro motor TTS del sistema.[/red] Instala espeak o espeak-ng.")
+            return
+        tts_engine.set_mode("sistema")
+        voz  = tts_engine.get_system_voice() or "(por defecto)"
+        rate = tts_engine.get_system_rate()
+        rprint(f"[green]Voz del sistema activada.[/green] Voz: {voz} | Velocidad: {rate} ppm")
+
+    else:
+        tts_engine.set_mode("false")
+        rprint("[yellow]Voz desactivada.[/yellow]")
+
 
 
 # ── Ayuda ─────────────────────────────────────────────────────────────────────

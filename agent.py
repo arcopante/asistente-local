@@ -13,6 +13,9 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 warnings.filterwarnings("ignore", category=UserWarning, module="TTS")
+warnings.filterwarnings("ignore", category=ResourceWarning, module="httpx")
+warnings.filterwarnings("ignore", message=".*unclosed.*transport.*", category=ResourceWarning)
+warnings.filterwarnings("ignore", message=".*unclosed.*client.*", category=ResourceWarning)
 import signal
 import asyncio
 import logging
@@ -40,8 +43,8 @@ logging.basicConfig(
     level=_log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-for _lib in ("httpx", "httpcore", "telegram", "telegram.ext", "apscheduler"):
-    logging.getLogger(_lib).setLevel(logging.WARNING)
+for _lib in ("httpx", "httpcore", "telegram", "telegram.ext", "apscheduler", "hpack"):
+    logging.getLogger(_lib).setLevel(logging.ERROR)
 
 logger = logging.getLogger("agent")
 
